@@ -1,0 +1,33 @@
+[Unit]
+Description=Slipstream control panel API
+After=network.target slipstream-agent.service
+Wants=slipstream-agent.service
+
+[Service]
+Type=simple
+User=slipstream
+Group=slipstream
+ExecStart=/usr/local/bin/panel-api
+Restart=on-failure
+RestartSec=2
+
+# Strong sandbox: this process handles browser traffic and must never need
+# root — all privileged work goes through the agent socket.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/slipstream
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
