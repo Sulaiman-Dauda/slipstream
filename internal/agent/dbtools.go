@@ -115,8 +115,11 @@ func (a *Agent) LaunchAdminer(p rpc.AdminerParams) (rpc.AdminerResult, error) {
 	}
 
 	docroot := filepath.Join(p.Site.RootPath, "current")
+	// The real Adminer stays a dotfile so nginx's dotfile deny rule blocks
+	// direct download of the credential-bearing include; only the wrapper
+	// (non-dot, token in the name) is web-reachable, and it self-destructs.
 	realName := ".slip-adminer-" + p.Token + ".php"
-	wrapName := ".slip-db-" + p.Token + ".php"
+	wrapName := "slip-db-" + p.Token + ".php"
 	if err := copyFile(cache, filepath.Join(docroot, realName), p.Site.SystemUser, a); err != nil {
 		return rpc.AdminerResult{}, err
 	}
@@ -130,6 +133,9 @@ func (a *Agent) LaunchAdminer(p rpc.AdminerParams) (rpc.AdminerResult, error) {
 	}
 	a.Runner.Run(context.Background(), "chown", p.Site.SystemUser+":"+p.Site.SystemUser, wrapPath)
 
+	// The Adminer session cleanup (removing the token files after expiry) is
+	// handled by the wrapper's self-destruct on next access; a belt-and-
+	// braces sweep also runs from the scheduler.
 	return rpc.AdminerResult{URL: fmt.Sprintf("https://%s/%s", p.Site.Domain, wrapName)}, nil
 }
 

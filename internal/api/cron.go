@@ -109,7 +109,7 @@ func (s *Server) renderCrontab(site state.Site) error {
 		return err
 	}
 	var b strings.Builder
-	b.WriteString("# Managed by Slipstream — edit cron jobs in the panel.\n")
+	b.WriteString("# Managed by Slipstream - edit cron jobs in the panel.\n")
 	b.WriteString("PATH=/usr/local/bin:/usr/bin:/bin\n")
 	for _, j := range jobs {
 		if !j.Enabled {
