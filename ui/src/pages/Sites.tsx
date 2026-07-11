@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { Site, SiteType } from "../types";
 import { Modal, StatusBadge, usePoll, useToast } from "../components/ui";
+import { Icon } from "../icons";
 
 const typeLabels: Record<SiteType, string> = {
   wordpress: "WordPress", woocommerce: "WooCommerce", static: "Static",
@@ -23,7 +24,7 @@ export default function Sites() {
           <h1>Sites</h1>
           <p className="sub">Every site is isolated, cached, and backed up by default.</p>
         </div>
-        <button onClick={() => setCreating(true)}>+ New site</button>
+        <button onClick={() => setCreating(true)}><Icon.plus /> New site</button>
       </div>
 
       {sites === null ? (
@@ -31,27 +32,28 @@ export default function Sites() {
       ) : sites.length === 0 ? (
         <div className="card empty">
           <div className="big">◫</div>
-          <p style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>No sites yet</p>
+          <div className="title">No sites yet</div>
           <p>Launch a production-ready WordPress site in one click.</p>
-          <button onClick={() => setCreating(true)} style={{ marginTop: 10 }}>Create your first site</button>
+          <button onClick={() => setCreating(true)} style={{ marginTop: 14 }}><Icon.plus /> Create your first site</button>
         </div>
       ) : (
         <div className="site-cards">
           {sites.map((s) => (
             <Link className="site-card" to={`/sites/${s.id}`} key={s.id}>
               <div className="domain">
-                <span>{typeIcon[s.type]}</span> {s.domain}
-                {s.staging_of ? <span className="badge dim plain" style={{ marginLeft: 4 }}>staging</span> : null}
+                <span className="favicon">{typeIcon[s.type]}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.domain}</span>
+                {s.staging_of ? <span className="badge dim plain" style={{ marginLeft: "auto" }}>staging</span> : null}
               </div>
               <div className="meta">
-                <span>{typeLabels[s.type]}</span>
+                <span>{typeLabels[s.type]}</span><span className="pip" />
                 <span>{s.profile}</span>
-                {s.php_version && <span>PHP {s.php_version}</span>}
+                {s.php_version && <><span className="pip" /><span>PHP {s.php_version}</span></>}
               </div>
               <div className="footer">
                 <StatusBadge status={s.status} />
                 <span className="dim3" style={{ fontSize: 12 }}>
-                  {s.config.cache_enabled ? "cache on" : "cache off"}
+                  {s.config.cache_enabled ? "Cache on" : "Cache off"}
                 </span>
               </div>
             </Link>

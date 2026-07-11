@@ -3,10 +3,43 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
+	"github.com/slipstream-panel/slipstream/internal/sysprobe"
+	"github.com/slipstream-panel/slipstream/internal/tune"
 )
+
+// tuneMariaDBIfNeeded applies hardware-aware MariaDB tuning the first time a
+// database is created. It sizes the InnoDB buffer pool and connection limits
+// from measured RAM/CPU (shared-server role), writes the managed config, and
+// restarts MariaDB. Idempotent: it no-ops once the config exists so operator
+// changes and re-tunes are never clobbered.
+func (a *Agent) tuneMariaDBIfNeeded(ctx context.Context) {
+	if _, err := os.Stat(tune.ConfigPath); err == nil {
+		return // already tuned
+	}
+	facts, err := sysprobe.Probe(a.Paths.SitesRoot)
+	if err != nil {
+		a.Log.Warn("mariadb tune: probe failed", "err", err)
+		return
+	}
+	cfg := tune.CalculateMariaDB(facts.MemTotalMB, facts.CPUCount, tune.RoleShared, false)
+	content, err := cfg.Render()
+	if err != nil {
+		return
+	}
+	if _, err := writeManaged(tune.ConfigPath, content, 0o644); err != nil {
+		a.Log.Warn("mariadb tune: write failed", "err", err)
+		return
+	}
+	if _, err := a.Runner.Run(ctx, "systemctl", "restart", "mariadb"); err != nil {
+		a.Log.Warn("mariadb tune: restart failed", "err", err)
+		return
+	}
+	a.Log.Info("mariadb tuned for hardware", "config", cfg.String())
+}
 
 // dbIdentRe is the security boundary for SQL identifiers: names generated
 // by the API always match, and anything else is rejected before it reaches
@@ -41,6 +74,8 @@ func (a *Agent) CreateDatabase(p rpc.DatabaseParams) (map[string]string, error) 
 	if maxConns <= 0 {
 		maxConns = 50
 	}
+	// Tune MariaDB for this machine on first database creation.
+	a.tuneMariaDBIfNeeded(ctx)
 	stmts := []string{
 		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", p.Name),
 		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s' WITH MAX_USER_CONNECTIONS %d;", p.User, p.Password, maxConns),

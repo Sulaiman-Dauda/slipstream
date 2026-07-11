@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
@@ -68,9 +67,4 @@ func splitLines(s string) []string {
 		out = append(out, s[start:])
 	}
 	return out
-}
-
-// siteDataDir is a small helper for adminer/export scratch under a site.
-func siteScratchDir(rootPath string) string {
-	return filepath.Join(rootPath, "shared", ".slipstream")
 }

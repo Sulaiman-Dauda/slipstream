@@ -46,16 +46,3 @@ func TestRenderConfig(t *testing.T) {
 		}
 	}
 }
-
-func TestRedisSiteConfig(t *testing.T) {
-	mem, policy := RedisSiteConfig(1024)
-	if mem != 128 || policy != "allkeys-lru" {
-		t.Errorf("redis config = %d %s", mem, policy)
-	}
-	if mem, _ := RedisSiteConfig(64); mem != 64 {
-		t.Errorf("redis floor = %d, want 64", mem)
-	}
-	if mem, _ := RedisSiteConfig(1 << 20); mem != 1024 {
-		t.Errorf("redis ceiling = %d, want 1024", mem)
-	}
-}

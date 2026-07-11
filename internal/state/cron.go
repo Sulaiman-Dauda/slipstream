@@ -39,25 +39,6 @@ func (s *Store) ListCronJobs(siteID int64) ([]CronJob, error) {
 	return out, rows.Err()
 }
 
-// AllCronJobs returns every cron job (for crontab rendering).
-func (s *Store) AllCronJobs() ([]CronJob, error) {
-	rows, err := s.db.Query(`SELECT id, site_id, schedule, command, description, enabled, last_run, last_status, created_at
-		FROM cron_jobs ORDER BY site_id, id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []CronJob
-	for rows.Next() {
-		j, err := scanCron(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, j)
-	}
-	return out, rows.Err()
-}
-
 // GetCronJob fetches one cron job.
 func (s *Store) GetCronJob(id int64) (CronJob, error) {
 	return scanCron(s.db.QueryRow(`SELECT id, site_id, schedule, command, description, enabled, last_run, last_status, created_at
@@ -102,24 +83,6 @@ func (s *Store) CreateAdminerSession(token string, siteID int64, ttl time.Durati
 	_, err := s.db.Exec(`INSERT INTO adminer_sessions (token_hash, site_id, expires_at, created_at) VALUES (?, ?, ?, ?)`,
 		hashToken(token), siteID, time.Now().UTC().Add(ttl).Format(time.RFC3339Nano), now())
 	return err
-}
-
-// AdminerSessionSite validates a token and returns its site ID.
-func (s *Store) AdminerSessionSite(token string) (int64, error) {
-	var siteID int64
-	var expires string
-	err := s.db.QueryRow(`SELECT site_id, expires_at FROM adminer_sessions WHERE token_hash=?`, hashToken(token)).
-		Scan(&siteID, &expires)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	if err != nil {
-		return 0, err
-	}
-	if parseTime(expires).Before(time.Now().UTC()) {
-		return 0, ErrNotFound
-	}
-	return siteID, nil
 }
 
 // PurgeExpiredAdminerSessions clears stale database-tool tokens.

@@ -49,7 +49,7 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
   return (
     <div className="auth-shell">
       <form className="card auth-card pad-lg" onSubmit={submit}>
-        <div className="logo"><span className="dot" /> slipstream</div>
+        <div className="logo"><span className="dot" /> Slipstream</div>
         {needsSetup && <p className="dim" style={{ textAlign: "center", marginTop: -8 }}>Create the administrator account to finish installation.</p>}
         {!needsSetup && !totpRequired && <p className="dim" style={{ textAlign: "center", marginTop: -8 }}>Sign in to your control panel.</p>}
 

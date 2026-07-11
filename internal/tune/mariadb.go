@@ -141,19 +141,6 @@ slow_query_log_file = /var/log/mysql/slow.log
 long_query_time = 1
 `))
 
-// RedisSiteConfig returns the per-site Redis policy: capped memory with
-// LRU eviction so one site's object cache cannot starve the machine.
-func RedisSiteConfig(siteMemMB int) (maxMemoryMB int, evictionPolicy string) {
-	m := siteMemMB / 8
-	if m < 64 {
-		m = 64
-	}
-	if m > 1024 {
-		m = 1024
-	}
-	return m, "allkeys-lru"
-}
-
 func (c MariaDBConfig) String() string {
 	return fmt.Sprintf("buffer_pool=%dM log=%dM conns=%d flush=%d",
 		c.BufferPoolMB, c.LogFileMB, c.MaxConnections, c.FlushLogAtCommit)
