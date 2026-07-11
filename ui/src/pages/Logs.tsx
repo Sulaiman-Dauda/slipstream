@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { Icon } from "../icons";
 
 const sources = [
   { v: "nginx-access", l: "Nginx access" },
@@ -29,12 +30,18 @@ export default function Logs() {
     <>
       <div className="topbar">
         <div><h1>Logs</h1><p className="sub">System and service logs. Per-site logs live on each site's Logs tab.</p></div>
-        <button className="ghost" onClick={load}>↻ Refresh</button>
       </div>
       <div className="tabs">
         {sources.map((s) => <button key={s.v} className={source === s.v ? "active" : ""} onClick={() => setSource(s.v)}>{s.l}</button>)}
       </div>
-      {loading ? <div className="empty"><span className="spinner" /></div> : <pre className="log">{content}</pre>}
+      <div className="log-window">
+        <div className="log-window-head">
+          <span className="dots"><span /><span /><span /></span>
+          <span className="path">{sources.find((s) => s.v === source)?.l.toLowerCase()}.log</span>
+          <button className="icon-btn" title="Refresh" onClick={load}><Icon.refresh /></button>
+        </div>
+        {loading ? <div className="empty"><span className="spinner" /></div> : <pre className="log">{content}</pre>}
+      </div>
     </>
   );
 }

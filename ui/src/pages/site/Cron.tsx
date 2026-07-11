@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, fmtAgo } from "../../api";
 import { CronJob, Site } from "../../types";
 import { useAction, useToast } from "../../components/ui";
+import { Icon } from "../../icons";
 
 const presets = [
   { label: "Every 15 minutes", value: "*/15 * * * *" },
@@ -38,7 +39,7 @@ export default function Cron({ site }: { site: Site }) {
   return (
     <>
       <div className="card mb">
-        <h3>New scheduled task</h3>
+        <div className="card-head"><span className="card-ico"><Icon.clock /></span><h3 style={{ margin: 0 }}>New scheduled task</h3></div>
         <form onSubmit={add}>
           <label>Schedule</label>
           <div className="row">

@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api";
 import { useAction, usePoll, useToast } from "../components/ui";
+import { Icon } from "../icons";
 
 interface FWStatus { enabled: boolean; rules: string[] }
 
@@ -26,13 +27,18 @@ export default function Firewall() {
 
       <div className="card-list">
         <div className="card">
-          <h3>Status <span className={`badge ${status?.enabled ? "good" : "warn"}`} style={{ marginLeft: 8 }}>{status?.enabled ? "active" : "inactive"}</span></h3>
-          <div className="mono" style={{ fontSize: 12.5, marginTop: 12, whiteSpace: "pre-wrap" }}>
-            {status?.rules?.length ? status.rules.join("\n") : "No rules."}
+          <div className="card-head">
+            <span className={`card-ico ${status?.enabled ? "good" : "warn"}`}><Icon.shield /></span>
+            <h3 style={{ margin: 0 }}>Status</h3>
+            <span className={`badge end ${status?.enabled ? "good" : "warn"}`}>{status?.enabled ? "active" : "inactive"}</span>
+          </div>
+          <div className="log-window mt">
+            <div className="log-window-head"><span className="dots"><span /><span /><span /></span><span className="path">ufw status</span></div>
+            <pre className="log">{status?.rules?.length ? status.rules.join("\n") : "No rules."}</pre>
           </div>
         </div>
         <form className="card" onSubmit={submit}>
-          <h3>Add / remove rule</h3>
+          <div className="card-head"><span className="card-ico"><Icon.key /></span><h3 style={{ margin: 0 }}>Add / remove rule</h3></div>
           <label>Action</label>
           <select value={action} onChange={(e) => setAction(e.target.value)}>
             <option value="allow">Allow port</option>
@@ -44,7 +50,7 @@ export default function Firewall() {
           <label>Restrict to source IP <span className="hint">optional — e.g. lock the panel to your IP</span></label>
           <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder="203.0.113.4" />
           <button className="mt" disabled={busy}>Apply rule</button>
-          <p className="dim3" style={{ fontSize: 12, marginTop: 10 }}>Tip: keep 22 (SSH), 80, 443 and 5252 (panel) open. To lock the panel to your office, allow 5252 from your IP and delete the open 5252 rule.</p>
+          <p className="note tiny">Tip: keep 22 (SSH), 80, 443 and 5252 (panel) open. To lock the panel to your office, allow 5252 from your IP and delete the open 5252 rule.</p>
         </form>
       </div>
     </>

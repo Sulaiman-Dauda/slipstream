@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, fmtAgo } from "../api";
 import { useAction, useToast } from "../components/ui";
+import { Icon } from "../icons";
 
 interface Me { email: string; totp_enabled: boolean }
 interface SessionView { id: string; current: boolean; created_at: string; expires_at: string }
@@ -32,7 +33,7 @@ function PasswordCard({ run, busy }: { run: RunFn; busy: boolean }) {
   const submit = (e: FormEvent) => { e.preventDefault(); run(() => api.post("/api/account/password", { current_password: cur, new_password: next }), "Password changed").then((ok) => { if (ok) { setCur(""); setNext(""); } }); };
   return (
     <form className="card" onSubmit={submit}>
-      <h3>Change password</h3>
+      <div className="card-head"><span className="card-ico"><Icon.lock /></span><h3 style={{ margin: 0 }}>Change password</h3></div>
       <label>Current password</label>
       <input type="password" value={cur} onChange={(e) => setCur(e.target.value)} required />
       <label>New password <span className="hint">12+ characters</span></label>
@@ -53,26 +54,30 @@ function TwoFactorCard({ me, run, busy, onChange, toast }: { me: Me; run: RunFn;
 
   return (
     <div className="card">
-      <h3>Two-factor authentication</h3>
+      <div className="card-head">
+        <span className={`card-ico ${me.totp_enabled ? "good" : ""}`}><Icon.shield /></span>
+        <h3 style={{ margin: 0 }}>Two-factor authentication</h3>
+        {me.totp_enabled && <span className="badge good plain end">enabled</span>}
+      </div>
       {me.totp_enabled ? (
         <>
-          <div className="ok-box" style={{ marginTop: 8 }}>2FA is active on your account.</div>
+          <div className="ok-box" style={{ marginTop: 8 }}><Icon.check /> 2FA is active on your account.</div>
           <label>Disable — confirm with your password</label>
           <input type="password" value={disablePw} onChange={(e) => setDisablePw(e.target.value)} />
           <button className="danger mt" disabled={busy || !disablePw} onClick={disable}>Disable 2FA</button>
         </>
       ) : enroll ? (
         <>
-          <p className="dim" style={{ fontSize: 13 }}>Scan with Google Authenticator, 1Password, or Authy — then enter the 6-digit code.</p>
-          <div style={{ textAlign: "center", margin: "12px 0" }}><img src={enroll.qr_data} alt="2FA QR code" style={{ width: 180, borderRadius: 8, background: "#fff", padding: 8 }} /></div>
+          <p className="note">Scan with Google Authenticator, 1Password, or Authy — then enter the 6-digit code.</p>
+          <div className="qr-frame"><img src={enroll.qr_data} alt="2FA QR code" /></div>
           <p className="dim3 mono" style={{ fontSize: 12, textAlign: "center", wordBreak: "break-all" }}>{enroll.secret}</p>
           <label>Verification code</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} maxLength={6} inputMode="numeric" placeholder="000000" style={{ textAlign: "center", letterSpacing: "0.3em" }} />
+          <input value={code} onChange={(e) => setCode(e.target.value)} maxLength={6} inputMode="numeric" placeholder="000000" className="totp-input" />
           <button className="mt" disabled={busy || code.length !== 6} onClick={confirm}>Verify & enable</button>
         </>
       ) : (
         <>
-          <p className="dim" style={{ fontSize: 13 }}>Add a second factor from an authenticator app. Strongly recommended.</p>
+          <p className="note">Add a second factor from an authenticator app. Strongly recommended.</p>
           <button className="mt" disabled={busy} onClick={begin}>Set up 2FA</button>
         </>
       )}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { Site, WPPlugin } from "../../types";
 import { useAction, useToast } from "../../components/ui";
+import { Icon } from "../../icons";
 
 interface CacheStats { backend: string; hits: number; misses: number; entries: number; mem_used: number; mem_total: number; hit_rate_pct: number }
 
@@ -40,15 +41,15 @@ export default function WordPress({ site }: { site: Site }) {
 
   return (
     <>
-      <div className="grid cols-3 mb">
+      <div className="grid cols-3 mb stagger">
         <div className="card">
-          <h3>Admin access</h3>
-          <p className="dim" style={{ fontSize: 13 }}>Log into wp-admin with one click — no password needed.</p>
-          <button className="mt" onClick={magicLogin} disabled={busy}>Log in to WordPress ↗</button>
+          <div className="card-head"><span className="card-ico"><Icon.key /></span><h3 style={{ margin: 0 }}>Admin access</h3></div>
+          <p className="note">Log into wp-admin with one click — no password needed.</p>
+          <button className="mt" onClick={magicLogin} disabled={busy}>Log in to WordPress <Icon.external /></button>
         </div>
         <div className="card">
-          <h3>Updates</h3>
-          <p className="dim" style={{ fontSize: 13 }}>{withUpdates > 0 ? `${withUpdates} plugin update${withUpdates === 1 ? "" : "s"} available` : "Everything up to date"}</p>
+          <div className="card-head"><span className={`card-ico ${withUpdates > 0 ? "warn" : "good"}`}><Icon.download /></span><h3 style={{ margin: 0 }}>Updates</h3></div>
+          <p className="note">{withUpdates > 0 ? `${withUpdates} plugin update${withUpdates === 1 ? "" : "s"} available` : "Everything up to date"}</p>
           <div className="row mt">
             <button className="small" onClick={() => update("all")} disabled={busy}>Update all</button>
             <button className="ghost small" onClick={() => update("core")} disabled={busy}>Core</button>
@@ -56,8 +57,11 @@ export default function WordPress({ site }: { site: Site }) {
           </div>
         </div>
         <div className="card">
-          <h3>Object cache {stats && stats.backend !== "none" && <span className="badge good plain" style={{ marginLeft: 6 }}>{stats.backend}</span>}</h3>
-          <p className="dim" style={{ fontSize: 13 }}>In-memory cache for DB queries — faster admin, cart, and cold renders. APCu on a single server (no daemon).</p>
+          <div className="card-head">
+            <span className="card-ico"><Icon.database /></span><h3 style={{ margin: 0 }}>Object cache</h3>
+            {stats && stats.backend !== "none" && <span className="badge good plain end">{stats.backend}</span>}
+          </div>
+          <p className="note">In-memory cache for DB queries — faster admin, cart, and cold renders. APCu on a single server (no daemon).</p>
           {stats && stats.backend === "apcu" && (
             <div className="dim3" style={{ fontSize: 12, margin: "6px 0" }}>
               hit rate {stats.hit_rate_pct}% · {stats.entries} entries · {(stats.mem_used / 1048576).toFixed(1)}MB used
@@ -72,9 +76,12 @@ export default function WordPress({ site }: { site: Site }) {
 
       <div className="card mb">
         <div className="row between">
-          <div>
-            <h3 style={{ margin: 0 }}>Cache warming</h3>
-            <p className="dim" style={{ fontSize: 13, margin: "4px 0 0" }}>Pre-fill the page cache from your sitemap so the first visitor is never cold. Runs automatically after deploys.</p>
+          <div className="card-head" style={{ marginBottom: 0 }}>
+            <span className="card-ico"><Icon.bolt /></span>
+            <div>
+              <h3 style={{ margin: 0 }}>Cache warming</h3>
+              <p className="note">Pre-fill the page cache from your sitemap so the first visitor is never cold. Runs automatically after deploys.</p>
+            </div>
           </div>
           <button className="small" disabled={busy} onClick={() => run(() => api.post(`/api/sites/${site.id}/warm`), "Warming cache from sitemap…")}>Warm now</button>
         </div>

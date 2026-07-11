@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { Site } from "../../types";
-import { useAction, useToast } from "../../components/ui";
+import { CopyButton, useAction, useToast } from "../../components/ui";
+import { Icon } from "../../icons";
 
 interface QueryResult { columns: string[]; rows: string[][]; message?: string }
 interface DBInfo { database: string; user: string; tables: QueryResult }
@@ -36,26 +37,26 @@ export default function Database({ site }: { site: Site }) {
 
   return (
     <>
-      <div className="grid cols-2 mb">
+      <div className="grid cols-2 mb stagger">
         <div className="card">
-          <h3>Database</h3>
+          <div className="card-head"><span className="card-ico"><Icon.database /></span><h3 style={{ margin: 0 }}>Database</h3></div>
           <dl className="kv mt">
-            <dt>Name</dt><dd className="mono">{info?.database || site.config.database.name}</dd>
-            <dt>User</dt><dd className="mono">{info?.user || site.config.database.user}</dd>
+            <dt>Name</dt><dd className="mono">{info?.database || site.config.database.name}<CopyButton value={info?.database || site.config.database.name} /></dd>
+            <dt>User</dt><dd className="mono">{info?.user || site.config.database.user}<CopyButton value={info?.user || site.config.database.user} /></dd>
           </dl>
         </div>
         <div className="card">
-          <h3>Tools</h3>
+          <div className="card-head"><span className="card-ico"><Icon.terminal /></span><h3 style={{ margin: 0 }}>Tools</h3></div>
           <div className="row mt">
-            <button onClick={launchAdminer} disabled={busy}>Open database console</button>
-            <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/database/export`), "Export started — find it under Files › shared/exports")}>Export .sql</button>
+            <button onClick={launchAdminer} disabled={busy}><Icon.external /> Open database console</button>
+            <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/database/export`), "Export started — find it under Files › shared/exports")}><Icon.download /> Export .sql</button>
           </div>
-          <p className="dim3" style={{ fontSize: 12, marginTop: 10 }}>The console (Adminer) opens on a private link that self-destructs after 30 minutes.</p>
+          <p className="note tiny">The console (Adminer) opens on a private link that self-destructs after 30 minutes.</p>
         </div>
       </div>
 
       <div className="card">
-        <h3>Query console</h3>
+        <div className="card-head"><span className="card-ico"><Icon.code /></span><h3 style={{ margin: 0 }}>Query console</h3></div>
         <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={4} className="mt" />
         <div className="row between mt">
           <label className="row" style={{ margin: 0, gap: 8, fontWeight: 500 }}>
