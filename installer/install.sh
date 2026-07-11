@@ -33,7 +33,7 @@ MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 DISK_MB=$(df -m / | awk 'NR==2 {print $4}')
 [[ $DISK_MB -ge 10000 ]] || fail "at least 10 GB free disk required"
 
-for port in 80 443 8443; do
+for port in 80 443 5252; do
   if ss -ltn "sport = :$port" | grep -q LISTEN; then
     fail "port $port is already in use — Slipstream must own the web ports"
   fi
@@ -145,10 +145,27 @@ systemctl enable --now slipstream-agent slipstream-api nginx "php${PHP_VERSION}-
 
 # ---------- firewall ----------
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
-  log "Opening firewall ports 80, 443, 8443…"
+  log "Opening firewall ports 22, 80, 443, 5252…"
+  ufw allow 22/tcp >/dev/null
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
-  ufw allow 8443/tcp >/dev/null
+  ufw allow 5252/tcp >/dev/null
+fi
+
+# Per-site SFTP: a chrooted internal-sftp subsystem for slip-site-* users so
+# customers can move files without a shell or access to other sites.
+if ! grep -q "Slipstream SFTP" /etc/ssh/sshd_config 2>/dev/null; then
+  cat >> /etc/ssh/sshd_config <<'SSHD'
+
+# Slipstream SFTP — chrooted, no shell, per-site isolation
+Match User slip-site-*
+    ChrootDirectory %h
+    ForceCommand internal-sftp
+    AllowTcpForwarding no
+    X11Forwarding no
+    PasswordAuthentication yes
+SSHD
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 fi
 
 # ---------- done ----------
@@ -160,7 +177,7 @@ SETUP_URL=${SETUP_URL/<server-ip>/$IP}
 echo
 log "Installation complete."
 echo
-echo "  Open:  ${SETUP_URL:-https://$IP:8443}"
+echo "  Open:  ${SETUP_URL:-https://$IP:5252}"
 echo
 echo "  The setup link expires in 20 minutes."
 echo "  (Your browser will warn about the self-signed certificate — expected on first boot.)"

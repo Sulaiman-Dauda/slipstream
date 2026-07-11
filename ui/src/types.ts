@@ -9,15 +9,18 @@ export interface Site {
   profile: Profile;
   engine: string;
   php_version: string;
+  system_user: string;
   status: "provisioning" | "active" | "error" | "deleting";
   staging_of?: number;
   config: {
     cache_enabled: boolean;
     cache_ttl_sec: number;
     object_cache: boolean;
+    sftp_enabled: boolean;
     proxy_upstream?: string;
-    database: { enabled: boolean; name: string };
+    database: { enabled: boolean; name: string; user: string };
     backups: { enabled: boolean; schedule: string; retention_days: number };
+    php: { memory_limit_mb: number; upload_max_mb: number; max_execution_seconds: number };
   };
   created_at: string;
 }
@@ -93,8 +96,63 @@ export interface AuditEvent {
   created_at: string;
 }
 
+export interface GuardSample {
+  path: string;
+  p50_ms: number;
+  p95_ms: number;
+  avg_queries: number;
+  peak_mem_bytes: number;
+  errors: number;
+  requests: number;
+}
+
 export interface GuardReport {
   verdict: "pass" | "warn" | "block";
   reasons?: string[];
+  baseline?: GuardSample[];
+  candidate?: GuardSample[];
   measured_at: string;
+}
+
+export interface CronJob {
+  id: number;
+  site_id: number;
+  schedule: string;
+  command: string;
+  description: string;
+  enabled: boolean;
+  last_run?: string;
+  last_status: string;
+  created_at: string;
+}
+
+export interface FileEntry {
+  name: string;
+  is_dir: boolean;
+  size: number;
+  mode: string;
+  mod_time: string;
+}
+
+export interface WPPlugin {
+  name: string;
+  status: string;
+  version: string;
+  update: string;
+}
+
+export interface ServiceInfo {
+  name: string;
+  unit: string;
+  active: boolean;
+  enabled: boolean;
+  detail: string;
+}
+
+export interface PanelUser {
+  id: number;
+  email: string;
+  role: string;
+  totp_enabled: boolean;
+  created_at: string;
 }

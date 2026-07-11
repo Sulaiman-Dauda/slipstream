@@ -5,7 +5,9 @@ package api
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -13,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/state"
 )
@@ -35,10 +38,30 @@ type Server struct {
 	// DefaultPHP is the PHP version new sites get (set from the installed
 	// runtime; empty falls back to 8.4).
 	DefaultPHP string
+	// PanelPort is the HTTPS port the panel listens on (for redirects and
+	// panel-cert issuance).
+	PanelPort int
+
+	loginLimiter *rateLimiter
 }
+
+// Init prepares runtime state (rate limiter). Call once before Routes.
+func (s *Server) Init() {
+	if s.loginLimiter == nil {
+		s.loginLimiter = newRateLimiter(8, time.Minute)
+	}
+}
+
+func sessionTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func base64Std(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 // Routes builds the full handler tree.
 func (s *Server) Routes() http.Handler {
+	s.Init()
 	mux := http.NewServeMux()
 
 	// Unauthenticated.
@@ -53,6 +76,52 @@ func (s *Server) Routes() http.Handler {
 	auth := func(fn http.HandlerFunc) http.HandlerFunc { return s.requireSession(fn) }
 	mux.HandleFunc("POST /api/logout", auth(s.handleLogout))
 	mux.HandleFunc("GET /api/me", auth(s.handleMe))
+
+	// Account & security
+	mux.HandleFunc("POST /api/account/password", auth(s.handleChangePassword))
+	mux.HandleFunc("POST /api/account/2fa/begin", auth(s.handleTOTPBegin))
+	mux.HandleFunc("POST /api/account/2fa/confirm", auth(s.handleTOTPConfirm))
+	mux.HandleFunc("POST /api/account/2fa/disable", auth(s.handleTOTPDisable))
+	mux.HandleFunc("GET /api/account/sessions", auth(s.handleListSessions))
+	mux.HandleFunc("DELETE /api/account/sessions/{id}", auth(s.handleRevokeSession))
+	mux.HandleFunc("GET /api/users", auth(s.handleListUsers))
+	mux.HandleFunc("POST /api/users", auth(s.handleCreateUser))
+	mux.HandleFunc("DELETE /api/users/{id}", auth(s.handleDeleteUser))
+
+	// Cron
+	mux.HandleFunc("GET /api/sites/{id}/cron", auth(s.handleListCron))
+	mux.HandleFunc("POST /api/sites/{id}/cron", auth(s.handleCreateCron))
+	mux.HandleFunc("DELETE /api/cron/{id}", auth(s.handleDeleteCron))
+
+	// Database tools
+	mux.HandleFunc("GET /api/sites/{id}/database", auth(s.handleDatabaseInfo))
+	mux.HandleFunc("POST /api/sites/{id}/database/query", auth(s.handleDatabaseQuery))
+	mux.HandleFunc("POST /api/sites/{id}/database/export", auth(s.handleDatabaseExport))
+	mux.HandleFunc("POST /api/sites/{id}/database/adminer", auth(s.handleLaunchAdminer))
+
+	// Files
+	mux.HandleFunc("GET /api/sites/{id}/files", auth(s.handleListFiles))
+	mux.HandleFunc("GET /api/sites/{id}/files/read", auth(s.handleReadFile))
+	mux.HandleFunc("POST /api/sites/{id}/files/write", auth(s.handleWriteFile))
+	mux.HandleFunc("POST /api/sites/{id}/sftp", auth(s.handleSetSFTP))
+
+	// PHP settings
+	mux.HandleFunc("PUT /api/sites/{id}/php", auth(s.handlePHPSettings))
+
+	// WordPress toolkit
+	mux.HandleFunc("POST /api/sites/{id}/wp/login", auth(s.handleWPMagicLogin))
+	mux.HandleFunc("GET /api/sites/{id}/wp/plugins", auth(s.handleWPPlugins))
+	mux.HandleFunc("POST /api/sites/{id}/wp/update", auth(s.handleWPUpdate))
+	mux.HandleFunc("POST /api/sites/{id}/wp/object-cache", auth(s.handleWPObjectCache))
+
+	// Services, firewall, panel cert
+	mux.HandleFunc("GET /api/services", auth(s.handleListServices))
+	mux.HandleFunc("POST /api/services/{name}/restart", auth(s.handleRestartService))
+	mux.HandleFunc("GET /api/logs", auth(s.handleReadLog))
+	mux.HandleFunc("GET /api/firewall", auth(s.handleFirewallStatus))
+	mux.HandleFunc("POST /api/firewall/rule", auth(s.handleFirewallRule))
+	mux.HandleFunc("POST /api/panel/certificate", auth(s.handlePanelCertificate))
+	mux.HandleFunc("POST /api/panel/update", auth(s.handleSelfUpdate))
 
 	mux.HandleFunc("GET /api/sites", auth(s.handleListSites))
 	mux.HandleFunc("POST /api/sites", auth(s.handleCreateSite))

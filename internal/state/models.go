@@ -74,6 +74,14 @@ type BackupPolicy struct {
 	Repository    string `json:"repository"` // named repository from settings
 }
 
+// PHPSettings are curated per-site php.ini overrides. Zero values mean
+// "use the sensible default the pool renderer computes".
+type PHPSettings struct {
+	MemoryLimitMB       int `json:"memory_limit_mb"`
+	UploadMaxMB         int `json:"upload_max_mb"`
+	MaxExecutionSeconds int `json:"max_execution_seconds"`
+}
+
 // SiteConfig is the declarative site description stored as JSON.
 type SiteConfig struct {
 	CacheEnabled  bool           `json:"cache_enabled"`
@@ -82,6 +90,8 @@ type SiteConfig struct {
 	Database      DatabaseConfig `json:"database"`
 	Resources     Resources      `json:"resources"`
 	Backups       BackupPolicy   `json:"backups"`
+	PHP           PHPSettings    `json:"php"`
+	SFTPEnabled   bool           `json:"sftp_enabled"`
 	ProxyUpstream string         `json:"proxy_upstream,omitempty"` // for SiteProxy
 	PublicRoot    string         `json:"public_root,omitempty"`    // docroot relative to release, e.g. "public"
 }
@@ -182,8 +192,29 @@ type User struct {
 	ID           int64     `json:"id"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
-	Role         string    `json:"role"` // admin
+	Role         string    `json:"role"` // admin | readonly
+	TOTPEnabled  bool      `json:"totp_enabled"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Session is an active panel login session.
+type Session struct {
+	TokenHash string    `json:"token_hash"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// CronJob is a scheduled command that runs as a site's Unix user.
+type CronJob struct {
+	ID          int64      `json:"id"`
+	SiteID      int64      `json:"site_id"`
+	Schedule    string     `json:"schedule"` // 5-field cron
+	Command     string     `json:"command"`
+	Description string     `json:"description"`
+	Enabled     bool       `json:"enabled"`
+	LastRun     *time.Time `json:"last_run,omitempty"`
+	LastStatus  string     `json:"last_status"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // AuditEvent is one immutable audit-log entry.

@@ -118,4 +118,35 @@ CREATE TABLE managed_files (
 	updated_at TEXT NOT NULL
 );
 `,
+	// 2: auth hardening, cron, adminer, php settings, scheduler bookkeeping
+	`
+ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE cron_jobs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+	schedule TEXT NOT NULL,
+	command TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	enabled INTEGER NOT NULL DEFAULT 1,
+	last_run TEXT,
+	last_status TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL
+);
+CREATE INDEX idx_cron_site ON cron_jobs(site_id);
+
+CREATE TABLE adminer_sessions (
+	token_hash TEXT PRIMARY KEY,
+	site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+	expires_at TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+-- Per-site scheduler bookkeeping: when we last ran automatic jobs.
+CREATE TABLE schedule_state (
+	key TEXT PRIMARY KEY,
+	last_run TEXT NOT NULL
+);
+`,
 }

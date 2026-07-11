@@ -92,12 +92,14 @@ func SizeWorkers(siteMemMB, requested int) Workers {
 }
 
 type poolVars struct {
-	Site    state.Site
-	Socket  string
-	OPcache OPcache
-	Workers Workers
-	MemLim  int
-	TmpDir  string
+	Site     state.Site
+	Socket   string
+	OPcache  OPcache
+	Workers  Workers
+	MemLim   int
+	UploadMB int
+	ExecSec  int
+	TmpDir   string
 }
 
 // RenderPool renders the pool file for a site. siteMemMB is the memory
@@ -113,13 +115,27 @@ func RenderPool(site state.Site, siteMemMB int) (path, content string, err error
 	if site.Type == state.SiteWooCommerce {
 		memLim = 512
 	}
+	uploadMB := 64
+	execSec := 120
+	// Curated per-site overrides win when set.
+	if site.Config.PHP.MemoryLimitMB > 0 {
+		memLim = site.Config.PHP.MemoryLimitMB
+	}
+	if site.Config.PHP.UploadMaxMB > 0 {
+		uploadMB = site.Config.PHP.UploadMaxMB
+	}
+	if site.Config.PHP.MaxExecutionSeconds > 0 {
+		execSec = site.Config.PHP.MaxExecutionSeconds
+	}
 	v := poolVars{
-		Site:    site,
-		Socket:  SocketFor(site.SystemUser),
-		OPcache: SizeOPcache(siteMemMB, site.Type),
-		Workers: SizeWorkers(siteMemMB, site.Config.Resources.PHPWorkers),
-		MemLim:  memLim,
-		TmpDir:  filepath.Join(site.RootPath, "tmp"),
+		Site:     site,
+		Socket:   SocketFor(site.SystemUser),
+		OPcache:  SizeOPcache(siteMemMB, site.Type),
+		Workers:  SizeWorkers(siteMemMB, site.Config.Resources.PHPWorkers),
+		MemLim:   memLim,
+		UploadMB: uploadMB,
+		ExecSec:  execSec,
+		TmpDir:   filepath.Join(site.RootPath, "tmp"),
 	}
 	var buf bytes.Buffer
 	if err := poolTmpl.Execute(&buf, v); err != nil {
@@ -163,9 +179,9 @@ php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,p
 
 ; Resource limits
 php_admin_value[memory_limit] = {{.MemLim}}M
-php_admin_value[upload_max_filesize] = 64M
-php_admin_value[post_max_size] = 64M
-php_admin_value[max_execution_time] = 120
+php_admin_value[upload_max_filesize] = {{.UploadMB}}M
+php_admin_value[post_max_size] = {{.UploadMB}}M
+php_admin_value[max_execution_time] = {{.ExecSec}}
 
 ; Velocity Engine: OPcache sized for this site's memory budget
 php_admin_flag[opcache.enable] = on

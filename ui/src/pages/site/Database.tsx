@@ -1,0 +1,86 @@
+import { useEffect, useState } from "react";
+import { api } from "../../api";
+import { Site } from "../../types";
+import { useAction, useToast } from "../../components/ui";
+
+interface QueryResult { columns: string[]; rows: string[][]; message?: string }
+interface DBInfo { database: string; user: string; tables: QueryResult }
+
+export default function Database({ site }: { site: Site }) {
+  const toast = useToast();
+  const { run, busy } = useAction(toast);
+  const [info, setInfo] = useState<DBInfo | null>(null);
+  const [sql, setSql] = useState("SELECT * FROM wp_options LIMIT 20;");
+  const [allowWrites, setAllowWrites] = useState(false);
+  const [result, setResult] = useState<QueryResult | null>(null);
+
+  useEffect(() => {
+    api.get<DBInfo>(`/api/sites/${site.id}/database`).then(setInfo).catch(() => undefined);
+  }, [site.id]);
+
+  const runQuery = () =>
+    run(async () => setResult(await api.post<QueryResult>(`/api/sites/${site.id}/database/query`, { sql, allow_writes: allowWrites })));
+
+  const launchAdminer = () =>
+    run(async () => {
+      const r = await api.post<{ url: string }>(`/api/sites/${site.id}/database/adminer`);
+      window.open(r.url, "_blank");
+    }, "Database console opened in a new tab (expires in 30 minutes)");
+
+  if (!site.config.database.enabled) return <div className="info-box">This site has no managed database.</div>;
+
+  const table = result || info?.tables;
+
+  return (
+    <>
+      <div className="grid cols-2 mb">
+        <div className="card">
+          <h3>Database</h3>
+          <dl className="kv mt">
+            <dt>Name</dt><dd className="mono">{info?.database || site.config.database.name}</dd>
+            <dt>User</dt><dd className="mono">{info?.user || site.config.database.user}</dd>
+          </dl>
+        </div>
+        <div className="card">
+          <h3>Tools</h3>
+          <div className="row mt">
+            <button onClick={launchAdminer} disabled={busy}>Open database console</button>
+            <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/database/export`), "Export started — find it under Files › shared/exports")}>Export .sql</button>
+          </div>
+          <p className="dim3" style={{ fontSize: 12, marginTop: 10 }}>The console (Adminer) opens on a private link that self-destructs after 30 minutes.</p>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Query console</h3>
+        <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={4} className="mt" />
+        <div className="row between mt">
+          <label className="row" style={{ margin: 0, gap: 8, fontWeight: 500 }}>
+            <span className="switch"><input type="checkbox" checked={allowWrites} onChange={(e) => setAllowWrites(e.target.checked)} /><span className="slider" /></span>
+            Allow write statements
+          </label>
+          <button onClick={runQuery} disabled={busy}>{busy ? "Running…" : "Run query"}</button>
+        </div>
+        {toast.node}
+      </div>
+
+      {table && (
+        <div className="mt">
+          {table.message && <div className="info-box mb">{table.message}</div>}
+          {table.columns && table.columns.length > 0 && (
+            <div className="table-wrap">
+              <table>
+                <thead><tr>{table.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+                <tbody>
+                  {(table.rows || []).map((row, i) => (
+                    <tr key={i}>{row.map((cell, j) => <td key={j} className="mono" style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cell}</td>)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
