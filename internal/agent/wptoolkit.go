@@ -136,6 +136,7 @@ func (a *Agent) WPObjectCache(p rpc.WPParams) (map[string]string, error) {
 		os.Remove(dropin)
 		a.wp(ctx, p.Site, "redis", "disable")
 		a.wp(ctx, p.Site, "plugin", "deactivate", "redis-cache")
+		a.reloadPHPFPM(ctx, p.Site.PHPVersion)
 		return map[string]string{"object_cache": "disabled"}, nil
 	}
 
@@ -165,6 +166,9 @@ func (a *Agent) WPObjectCache(p rpc.WPParams) (map[string]string, error) {
 	}
 	a.Runner.Run(ctx, "chown", "-h", p.Site.SystemUser+":"+p.Site.SystemUser, dropin)
 	a.Runner.Run(ctx, "chown", p.Site.SystemUser+":"+p.Site.SystemUser, shared)
+	// Reload FPM so OPcache picks up the new/removed drop-in immediately —
+	// otherwise a stale cached object-cache.php can fatal the site.
+	a.reloadPHPFPM(ctx, p.Site.PHPVersion)
 	return map[string]string{"object_cache": "enabled", "backend": "apcu"}, nil
 }
 

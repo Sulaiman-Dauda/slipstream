@@ -128,6 +128,11 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		cacheEnabled = *req.CacheEnabled && cacheEnabled
 	}
 
+	// Laravel serves from public/; the renderer roots the docroot there.
+	publicRoot := ""
+	if siteType == state.SiteLaravel {
+		publicRoot = "public"
+	}
 	site := state.Site{
 		Domain:     req.Domain,
 		Aliases:    req.Aliases,
@@ -142,6 +147,7 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 			CacheEnabled:  cacheEnabled,
 			ObjectCache:   req.ObjectCache,
 			ProxyUpstream: req.ProxyUpstream,
+			PublicRoot:    publicRoot,
 		},
 	}
 	created, err := s.Store.CreateSite(site)
