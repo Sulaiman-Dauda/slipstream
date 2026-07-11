@@ -42,8 +42,11 @@ func DefaultPaths() Paths {
 	return Paths{
 		SitesRoot:    "/srv/sites",
 		CacheRoot:    "/var/cache/slipstream",
-		LogRoot:      "/var/log/slipstream",
-		ACMEWebroot:  "/var/lib/slipstream/acme",
+		LogRoot: "/var/log/slipstream",
+		// Outside /var/lib/slipstream on purpose: nginx (www-data) must be
+		// able to traverse to the challenge files, and the panel state dir
+		// is deliberately closed to it.
+		ACMEWebroot: "/var/www/slipstream-acme",
 		FallbackCert: "/etc/slipstream/certs/fallback.pem",
 		FallbackKey:  "/etc/slipstream/certs/fallback.key",
 		CertLiveDir:  "/etc/letsencrypt/live",

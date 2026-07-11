@@ -57,6 +57,7 @@ func main() {
 		Log:             logger,
 		UI:              ui.FS(),
 		InsecureCookies: dev,
+		DefaultPHP:      env("SLIPSTREAM_PHP_VERSION", "8.4"),
 	}
 
 	// First boot: mint the one-time setup URL.

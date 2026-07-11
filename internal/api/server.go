@@ -32,6 +32,9 @@ type Server struct {
 	UI fs.FS
 	// InsecureCookies disables the Secure cookie flag for local development.
 	InsecureCookies bool
+	// DefaultPHP is the PHP version new sites get (set from the installed
+	// runtime; empty falls back to 8.4).
+	DefaultPHP string
 }
 
 // Routes builds the full handler tree.

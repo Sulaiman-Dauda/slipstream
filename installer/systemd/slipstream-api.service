@@ -7,6 +7,7 @@ Wants=slipstream-agent.service
 Type=simple
 User=slipstream
 Group=slipstream
+EnvironmentFile=-/etc/slipstream/panel.env
 ExecStart=/usr/local/bin/panel-api
 Restart=on-failure
 RestartSec=2

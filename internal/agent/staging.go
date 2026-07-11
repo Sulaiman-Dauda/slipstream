@@ -25,7 +25,7 @@ func (a *Agent) CreateStaging(p rpc.StagingParams) (rpc.CreateSiteResult, error)
 	// 1. Provision the staging skeleton (user, dirs, db) without app install.
 	stgNoApp := stg
 	stgNoApp.Type = state.SitePHP // skip WordPress bootstrap; we clone instead
-	result, err := a.CreateSite(rpc.CreateSiteParams{Site: stgNoApp, AdminPassword: p.DBPassword})
+	result, err := a.CreateSite(rpc.CreateSiteParams{Site: stgNoApp, DBPassword: p.DBPassword})
 	if err != nil {
 		return result, err
 	}
@@ -53,6 +53,19 @@ func (a *Agent) CreateStaging(p rpc.StagingParams) (rpc.CreateSiteResult, error)
 			return result, err
 		}
 	}
+	// Staging gets its own copy of the shared config: the cloned release's
+	// wp-config symlink still points at production's shared file, and the
+	// credential rewrites below must never touch production.
+	if prodCfg, err := os.ReadFile(filepath.Join(prod.RootPath, "shared", "wp-config.php")); err == nil {
+		stgCfg := filepath.Join(stg.RootPath, "shared", "wp-config.php")
+		if err := os.WriteFile(stgCfg, prodCfg, 0o640); err != nil {
+			return result, err
+		}
+		os.Remove(filepath.Join(stgRelease, "wp-config.php"))
+		if err := forceSymlink(stgCfg, filepath.Join(stgRelease, "wp-config.php")); err != nil {
+			return result, err
+		}
+	}
 
 	// 3. Clone the database.
 	if prod.Config.Database.Enabled && !prod.Config.Database.External {
@@ -74,6 +87,12 @@ func (a *Agent) CreateStaging(p rpc.StagingParams) (rpc.CreateSiteResult, error)
 		if _, err := a.Runner.Run(ctx, "mariadb", "--protocol=socket", stg.Config.Database.Name, "-e", "source "+dumpFile); err != nil {
 			return result, fmt.Errorf("import staging db: %w", err)
 		}
+	}
+
+	// Cloned files carry production ownership; the staging user must own
+	// them before wp-cli (running as that user) can touch wp-config.
+	if _, err := a.Runner.Run(ctx, "chown", "-R", stg.SystemUser+":"+stg.SystemUser, stg.RootPath); err != nil {
+		return result, err
 	}
 
 	// 4. WordPress-specific safety: rewrite URLs, block indexing, update

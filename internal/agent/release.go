@@ -28,8 +28,14 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 	if !releaseIDRe.MatchString(p.ReleaseID) {
 		return rpc.DeployResult{}, fmt.Errorf("invalid release id %q", p.ReleaseID)
 	}
-	if fi, err := os.Stat(p.SourceDir); err != nil || !fi.IsDir() {
+	// Resolve symlinks: deploying from a site's `current` link must copy
+	// the release content, not the link itself.
+	sourceDir, err := filepath.EvalSymlinks(p.SourceDir)
+	if err != nil {
 		return rpc.DeployResult{}, fmt.Errorf("source dir %q unavailable: %v", p.SourceDir, err)
+	}
+	if fi, err := os.Stat(sourceDir); err != nil || !fi.IsDir() {
+		return rpc.DeployResult{}, fmt.Errorf("source dir %q unavailable: %v", sourceDir, err)
 	}
 
 	releaseDir := filepath.Join(site.RootPath, "releases", p.ReleaseID)
@@ -41,7 +47,7 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 	}
 	// cp -a preserves permissions and is dramatically faster than a Go file
 	// walk for large trees.
-	if _, err := a.Runner.Run(ctx, "cp", "-a", p.SourceDir, releaseDir); err != nil {
+	if _, err := a.Runner.Run(ctx, "cp", "-a", sourceDir, releaseDir); err != nil {
 		return rpc.DeployResult{}, fmt.Errorf("copy release: %w", err)
 	}
 
@@ -50,6 +56,16 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 	if _, err := os.Stat(filepath.Dir(uploads)); err == nil {
 		os.RemoveAll(uploads)
 		if err := forceSymlink(filepath.Join(site.RootPath, "shared", "uploads"), uploads); err != nil {
+			return rpc.DeployResult{}, err
+		}
+	}
+	// Configuration always comes from THIS site's shared/, never from the
+	// deployed tree — a release cloned from staging must not carry staging
+	// credentials into production.
+	sharedCfg := filepath.Join(site.RootPath, "shared", "wp-config.php")
+	if _, err := os.Stat(sharedCfg); err == nil {
+		os.Remove(filepath.Join(releaseDir, "wp-config.php"))
+		if err := forceSymlink(sharedCfg, filepath.Join(releaseDir, "wp-config.php")); err != nil {
 			return rpc.DeployResult{}, err
 		}
 	}

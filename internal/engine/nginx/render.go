@@ -158,14 +158,13 @@ log_format slipstream '$remote_addr - $host [$time_local] "$request" '
                       '$status $body_bytes_sent $request_time '
                       'cache:$upstream_cache_status "$http_user_agent"';
 
-gzip on;
+# gzip itself is enabled by the distro nginx.conf ("gzip on;"); redeclaring
+# it here would be a duplicate-directive error. These tune it.
 gzip_vary on;
 gzip_comp_level 5;
 gzip_min_length 1024;
 gzip_types text/plain text/css text/xml application/json application/javascript
            application/xml+rss application/atom+xml image/svg+xml font/woff2;
-
-server_tokens off;
 `
 
 var zoneTmpl = template.Must(template.New("zone").Parse(
@@ -196,6 +195,7 @@ server {
     listen [::]:443 ssl;
     http2 on;
     server_name {{.ServerNames}};
+    server_tokens off;
 
     ssl_certificate {{.Cert}};
     ssl_certificate_key {{.Key}};

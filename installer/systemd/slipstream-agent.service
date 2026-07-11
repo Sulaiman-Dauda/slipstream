@@ -5,6 +5,7 @@ Wants=mariadb.service nginx.service
 
 [Service]
 Type=simple
+EnvironmentFile=-/etc/slipstream/panel.env
 ExecStart=/usr/local/bin/panel-agent
 Restart=on-failure
 RestartSec=2

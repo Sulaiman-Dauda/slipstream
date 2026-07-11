@@ -62,11 +62,17 @@ func (a *Agent) input(site state.Site) engine.Input {
 }
 
 // renderSite writes all managed config for a site and reloads services.
+// Engine-global files (log formats, compression defaults) are re-rendered
+// too: the write is idempotent and guarantees vhosts never reference
+// missing definitions.
 func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedFile, error) {
 	in := a.input(site)
 	files, err := a.Renderer.SiteFiles(in)
 	if err != nil {
 		return nil, err
+	}
+	for path, content := range a.Renderer.GlobalFiles() {
+		files[path] = content
 	}
 	if in.Policy.Enabled {
 		if err := os.MkdirAll(in.CacheDir, 0o700); err != nil {
@@ -77,10 +83,30 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 		return nil, err
 	}
 
+	// Remember prior content so a failed nginx validation can roll back —
+	// one bad render must never wedge reloads for every other site.
+	type prior struct {
+		content []byte
+		existed bool
+	}
+	priors := map[string]prior{}
+	rollback := func() {
+		for path, p := range priors {
+			if p.existed {
+				os.WriteFile(path, p.content, 0o644)
+			} else {
+				os.Remove(path)
+			}
+		}
+	}
+
 	var managed []rpc.ManagedFile
 	for path, content := range files {
+		old, readErr := os.ReadFile(path)
+		priors[path] = prior{content: old, existed: readErr == nil}
 		mf, err := writeManaged(path, content, 0o644)
 		if err != nil {
+			rollback()
 			return nil, err
 		}
 		managed = append(managed, mf)
@@ -100,17 +126,22 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 		if a.Paths.PHPPoolRoot != "/etc/php" {
 			poolPath = filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", site.SystemUser+".conf")
 		}
+		old, readErr := os.ReadFile(poolPath)
+		priors[poolPath] = prior{content: old, existed: readErr == nil}
 		mf, err := writeManaged(poolPath, poolContent, 0o644)
 		if err != nil {
+			rollback()
 			return nil, err
 		}
 		managed = append(managed, mf)
 		if err := a.reloadPHPFPM(ctx, site.PHPVersion); err != nil {
+			rollback()
 			return nil, err
 		}
 	}
 
 	if err := a.reloadNginx(); err != nil {
+		rollback()
 		return nil, err
 	}
 	return managed, nil
@@ -183,9 +214,14 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		result.DatabaseName, result.DatabaseUser = dbp.Name, dbp.User
 	}
 
-	// 4. First release directory and the current symlink.
+	// 4. First release directory and the current symlink. The release dir
+	// must belong to the site user before the app bootstrap: wp-cli runs
+	// as that user and writes here.
 	releaseDir := filepath.Join(site.RootPath, "releases", "initial")
 	if err := os.MkdirAll(releaseDir, 0o750); err != nil {
+		return result, err
+	}
+	if _, err := a.Runner.Run(ctx, "chown", "-R", site.SystemUser+":"+site.SystemUser, releaseDir); err != nil {
 		return result, err
 	}
 	if err := forceSymlink(releaseDir, filepath.Join(site.RootPath, "current")); err != nil {
@@ -250,6 +286,20 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 		"--admin_email="+p.AdminEmail, "--skip-email"); err != nil {
 		return fmt.Errorf("wp core install: %w", err)
 	}
+	// Configuration lives in shared/, not in the release: deployments carry
+	// code, never credentials. wp-cli edits follow the symlink. (If wp-cli
+	// produced no config file it already failed loudly above.)
+	cfg := filepath.Join(dir, "wp-config.php")
+	sharedCfg := filepath.Join(site.RootPath, "shared", "wp-config.php")
+	if _, err := os.Stat(cfg); err == nil {
+		if err := os.Rename(cfg, sharedCfg); err != nil {
+			return fmt.Errorf("move wp-config to shared: %w", err)
+		}
+		if err := forceSymlink(sharedCfg, cfg); err != nil {
+			return err
+		}
+	}
+
 	// Move uploads into shared/ so releases stay immutable.
 	uploads := filepath.Join(dir, "wp-content", "uploads")
 	if err := os.MkdirAll(filepath.Dir(uploads), 0o750); err != nil {
