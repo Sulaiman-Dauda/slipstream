@@ -235,12 +235,32 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		if err := a.installWordPress(ctx, site, releaseDir, p); err != nil {
 			return result, err
 		}
+		// Object cache on by default: WooCommerce/commerce benefit most, but
+		// even a blog's cold renders and logged-in paths get faster. APCu is
+		// the single-server backend (no daemon).
+		if _, err := a.WPObjectCache(rpc.WPParams{Site: site, Enable: true}); err != nil {
+			a.Log.Warn("object cache setup failed", "site", site.Domain, "err", err)
+		}
+		// Commerce sites: tame the cart-fragments AJAX that punches through
+		// the page cache on every anonymous page.
+		if site.Type == state.SiteWooCommerce || site.Profile == state.ProfileCommerce {
+			run := func(args ...string) { a.wp(ctx, site, args...) }
+			run("config", "set", "SLIPSTREAM_DISABLE_CART_FRAGMENTS", "true", "--raw")
+		}
 	case state.SiteStatic:
 		index := filepath.Join(releaseDir, "index.html")
 		if err := os.WriteFile(index, []byte(placeholderHTML(site.Domain)), 0o644); err != nil {
 			return result, err
 		}
+	case state.SiteLaravel:
+		// A minimal, always-valid preload file so opcache.preload never
+		// points at a missing path (which would stop PHP-FPM).
+		os.WriteFile(filepath.Join(releaseDir, "slipstream-preload.php"),
+			[]byte("<?php\n// Slipstream OPcache preload. Regenerated on deploy.\n"), 0o644)
 	}
+
+	// Precompress static assets so nginx serves ready-made .gz.
+	precompressTree(releaseDir)
 	if _, err := a.Runner.Run(ctx, "chown", "-R", site.SystemUser+":"+site.SystemUser, releaseDir); err != nil {
 		return result, err
 	}
@@ -287,6 +307,9 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 		"--admin_email="+p.AdminEmail, "--skip-email"); err != nil {
 		return fmt.Errorf("wp core install: %w", err)
 	}
+	// Pretty permalinks by default: better for SEO, and required for the
+	// core sitemap (which cache-warming crawls) to resolve.
+	run("rewrite", "structure", "/%postname%/", "--hard")
 	// Configuration lives in shared/, not in the release: deployments carry
 	// code, never credentials. wp-cli edits follow the symlink. (If wp-cli
 	// produced no config file it already failed loudly above.)

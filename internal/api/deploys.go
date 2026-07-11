@@ -109,6 +109,8 @@ func (s *Server) handlePromote(w http.ResponseWriter, r *http.Request) {
 		s.Store.SetDeploymentStatus(dep.ID, state.DeployPromoted, "")
 		progress(80, "Purging page cache")
 		s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: site}, nil)
+		progress(90, "Warming cache so the first visitor is not cold")
+		s.warmInBackground(site)
 		progress(100, dep.ReleaseID+" is live")
 		return nil
 	})
@@ -241,6 +243,7 @@ func (s *Server) handleSafePush(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Store.SetDeploymentStatus(dep.ID, state.DeployPromoted, "")
 		s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: prod}, nil)
+		s.warmInBackground(prod)
 		progress(100, "Safe push complete: "+releaseID+" is live")
 		return nil
 	})

@@ -113,6 +113,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/sites/{id}/wp/plugins", auth(s.handleWPPlugins))
 	mux.HandleFunc("POST /api/sites/{id}/wp/update", auth(s.handleWPUpdate))
 	mux.HandleFunc("POST /api/sites/{id}/wp/object-cache", auth(s.handleWPObjectCache))
+	mux.HandleFunc("GET /api/sites/{id}/cache-stats", auth(s.handleCacheStats))
+	mux.HandleFunc("POST /api/sites/{id}/warm", auth(s.handleWarmCache))
 
 	// Services, firewall, panel cert
 	mux.HandleFunc("GET /api/services", auth(s.handleListServices))

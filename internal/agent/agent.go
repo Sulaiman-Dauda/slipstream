@@ -125,6 +125,8 @@ func (a *Agent) RegisterAll(s *rpc.Server) {
 	s.Handle(rpc.MethodWPObjectCache, typed(a.WPObjectCache))
 	s.Handle(rpc.MethodPanelCert, typed(a.PanelCertificate))
 	s.Handle(rpc.MethodSelfUpdate, typed(a.SelfUpdate))
+	s.Handle(rpc.MethodCacheStats, typed(a.CacheStats))
+	s.Handle(rpc.MethodWarmCache, typed(a.WarmCache))
 }
 
 // typed adapts a strongly-typed handler to the raw RPC signature.

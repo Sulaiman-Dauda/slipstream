@@ -172,6 +172,33 @@ type WPLoginResult struct {
 	URL string `json:"url"`
 }
 
+// CacheStatsResult reports object-cache effectiveness.
+type CacheStatsResult struct {
+	Backend    string `json:"backend"` // apcu | redis | none
+	Hits       int64  `json:"hits"`
+	Misses     int64  `json:"misses"`
+	Entries    int64  `json:"entries"`
+	MemUsed    int64  `json:"mem_used"`
+	MemTotal   int64  `json:"mem_total"`
+	HitRatePct int    `json:"hit_rate_pct"`
+}
+
+// HitsPlusMisses is the total sampled operations.
+func (c CacheStatsResult) HitsPlusMisses() int64 { return c.Hits + c.Misses }
+
+// WarmParams pre-fills a site's full-page cache from its sitemap.
+type WarmParams struct {
+	Site state.Site `json:"site"`
+	// MaxURLs caps how many URLs to warm (0 = default).
+	MaxURLs int `json:"max_urls"`
+}
+
+// WarmResult reports the warming outcome.
+type WarmResult struct {
+	Warmed int `json:"warmed"`
+	Cached int `json:"cached"` // how many came back as cache HIT after warming
+}
+
 // WPPlugin is one installed plugin/theme.
 type WPPlugin struct {
 	Name    string `json:"name"`

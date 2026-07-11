@@ -3,17 +3,22 @@ import { api } from "../../api";
 import { Site, WPPlugin } from "../../types";
 import { useAction, useToast } from "../../components/ui";
 
+interface CacheStats { backend: string; hits: number; misses: number; entries: number; mem_used: number; mem_total: number; hit_rate_pct: number }
+
 export default function WordPress({ site }: { site: Site }) {
   const toast = useToast();
   const { run, busy } = useAction(toast);
   const [plugins, setPlugins] = useState<WPPlugin[]>([]);
   const [themes, setThemes] = useState<WPPlugin[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [stats, setStats] = useState<CacheStats | null>(null);
 
-  const load = () =>
+  const load = () => {
     api.get<{ plugins: WPPlugin[]; themes: WPPlugin[] }>(`/api/sites/${site.id}/wp/plugins`)
       .then((r) => { setPlugins(r.plugins || []); setThemes(r.themes || []); setLoaded(true); })
       .catch(() => setLoaded(true));
+    api.get<CacheStats>(`/api/sites/${site.id}/cache-stats`).then(setStats).catch(() => undefined);
+  };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [site.id]);
 
@@ -46,12 +51,27 @@ export default function WordPress({ site }: { site: Site }) {
           </div>
         </div>
         <div className="card">
-          <h3>Redis object cache</h3>
-          <p className="dim" style={{ fontSize: 13 }}>Cache database queries in memory for a faster admin and dynamic pages.</p>
+          <h3>Object cache {stats && stats.backend !== "none" && <span className="badge good plain" style={{ marginLeft: 6 }}>{stats.backend}</span>}</h3>
+          <p className="dim" style={{ fontSize: 13 }}>In-memory cache for DB queries — faster admin, cart, and cold renders. APCu on a single server (no daemon).</p>
+          {stats && stats.backend === "apcu" && (
+            <div className="dim3" style={{ fontSize: 12, margin: "6px 0" }}>
+              hit rate {stats.hit_rate_pct}% · {stats.entries} entries · {(stats.mem_used / 1048576).toFixed(1)}MB used
+            </div>
+          )}
           <div className="row mt">
             <button className="small" onClick={() => toggleCache(true)} disabled={busy || site.config.object_cache}>Enable</button>
             <button className="ghost small" onClick={() => toggleCache(false)} disabled={busy || !site.config.object_cache}>Disable</button>
           </div>
+        </div>
+      </div>
+
+      <div className="card mb">
+        <div className="row between">
+          <div>
+            <h3 style={{ margin: 0 }}>Cache warming</h3>
+            <p className="dim" style={{ fontSize: 13, margin: "4px 0 0" }}>Pre-fill the page cache from your sitemap so the first visitor is never cold. Runs automatically after deploys.</p>
+          </div>
+          <button className="small" disabled={busy} onClick={() => run(() => api.post(`/api/sites/${site.id}/warm`), "Warming cache from sitemap…")}>Warm now</button>
         </div>
       </div>
 

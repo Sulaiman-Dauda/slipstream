@@ -58,6 +58,7 @@ apt-get install -y -qq \
   "php${PHP_VERSION}-gd" "php${PHP_VERSION}-intl" "php${PHP_VERSION}-mbstring" \
   "php${PHP_VERSION}-soap" "php${PHP_VERSION}-xml" "php${PHP_VERSION}-zip" \
   "php${PHP_VERSION}-imagick" "php${PHP_VERSION}-bcmath" "php${PHP_VERSION}-redis" \
+  "php${PHP_VERSION}-apcu" \
   >/dev/null
 
 # Redis stays off until a site enables object caching.
