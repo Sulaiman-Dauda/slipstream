@@ -28,7 +28,7 @@ export default function Settings() {
       <p className="sub">Panel-wide configuration. Per-site options live on each site.</p>
       {toast.node}
 
-      <div className="grid cols-2">
+      <div className="card-list">
         <div className="card">
           <h3>Panel domain & HTTPS</h3>
           <p className="dim" style={{ fontSize: 13 }}>Point a domain at this server, then get a real certificate for the panel itself. Runs on port 5252.</p>

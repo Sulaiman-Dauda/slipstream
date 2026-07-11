@@ -24,7 +24,7 @@ export default function Firewall() {
       <p className="sub">Control which ports are reachable. UFW under the hood.</p>
       {toast.node}
 
-      <div className="grid cols-2">
+      <div className="card-list">
         <div className="card">
           <h3>Status <span className={`badge ${status?.enabled ? "good" : "warn"}`} style={{ marginLeft: 8 }}>{status?.enabled ? "active" : "inactive"}</span></h3>
           <div className="mono" style={{ fontSize: 12.5, marginTop: 12, whiteSpace: "pre-wrap" }}>
