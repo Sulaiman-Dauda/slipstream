@@ -224,20 +224,31 @@ function PHPTab({ site, onChange }: { site: Site; onChange: () => void }) {
   const [upload, setUpload] = useState(site.config.php.upload_max_mb || 64);
   const [exec, setExec] = useState(site.config.php.max_execution_seconds || 120);
   return (
-    <div className="card form-narrow">
+    <div className="card">
       <h3>PHP settings</h3>
-      <label>PHP version</label>
-      <select value={version} onChange={(e) => setVersion(e.target.value)}>
-        {["8.2", "8.3", "8.4", "8.5"].map((v) => <option key={v} value={v}>PHP {v}</option>)}
-      </select>
-      <label>Memory limit (MB) <span className="hint">64–4096</span></label>
-      <input type="number" value={mem} onChange={(e) => setMem(Number(e.target.value))} />
-      <label>Max upload size (MB) <span className="hint">1–2048</span></label>
-      <input type="number" value={upload} onChange={(e) => setUpload(Number(e.target.value))} />
-      <label>Max execution time (s) <span className="hint">10–600</span></label>
-      <input type="number" value={exec} onChange={(e) => setExec(Number(e.target.value))} />
+      <p className="dim" style={{ fontSize: 13, marginTop: 0 }}>Curated per-site limits. OPcache and worker counts are sized automatically.</p>
+      <div className="field-grid mt">
+        <div>
+          <label>PHP version</label>
+          <select value={version} onChange={(e) => setVersion(e.target.value)}>
+            {["8.2", "8.3", "8.4", "8.5"].map((v) => <option key={v} value={v}>PHP {v}</option>)}
+          </select>
+        </div>
+        <div>
+          <label>Memory limit <span className="hint">MB · 64–4096</span></label>
+          <input type="number" value={mem} onChange={(e) => setMem(Number(e.target.value))} />
+        </div>
+        <div>
+          <label>Max upload size <span className="hint">MB · 1–2048</span></label>
+          <input type="number" value={upload} onChange={(e) => setUpload(Number(e.target.value))} />
+        </div>
+        <div>
+          <label>Max execution time <span className="hint">s · 10–600</span></label>
+          <input type="number" value={exec} onChange={(e) => setExec(Number(e.target.value))} />
+        </div>
+      </div>
       {toast.node}
-      <button className="mt" disabled={busy} onClick={() => run(() => api.put(`/api/sites/${site.id}/php`, { php_version: version, memory_limit_mb: mem, upload_max_mb: upload, max_execution_seconds: exec }), "PHP settings applied").then(onChange)}>Apply</button>
+      <button className="mt-lg" disabled={busy} onClick={() => run(() => api.put(`/api/sites/${site.id}/php`, { php_version: version, memory_limit_mb: mem, upload_max_mb: upload, max_execution_seconds: exec }), "PHP settings applied").then(onChange)}>Apply</button>
     </div>
   );
 }
@@ -248,18 +259,29 @@ function SFTPTab({ site, onChange }: { site: Site; onChange: () => void }) {
   const [password, setPassword] = useState("");
   const [info, setInfo] = useState<{ host: string; username: string; port: number } | null>(null);
   return (
-    <div className="card form-narrow">
+    <div className="card">
       <h3>SFTP access</h3>
-      <p className="dim" style={{ fontSize: 13 }}>Enable a chrooted SFTP account for this site. Connect with FileZilla, Cyberduck, or VS Code — jailed to this site only, no shell.</p>
-      {site.config.sftp_enabled && <div className="ok-box">SFTP is enabled for <span className="mono">{site.system_user || `slip-site-${site.id}`}</span>.</div>}
-      <label>Set SFTP password <span className="hint">12+ characters</span></label>
-      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={12} />
-      {info && <div className="info-box mt"><div className="kv"><dt>Host</dt><dd className="mono">{info.host.split(":")[0]}</dd><dt>Port</dt><dd className="mono">{info.port}</dd><dt>Username</dt><dd className="mono">{info.username}</dd></div></div>}
-      {toast.node}
-      <div className="row mt">
-        <button disabled={busy || password.length < 12} onClick={() => run(async () => { const r = await api.post<{ host: string; username: string; port: number }>(`/api/sites/${site.id}/sftp`, { enable: true, password }); setInfo(r); }, "SFTP enabled").then(onChange)}>Enable SFTP</button>
-        {site.config.sftp_enabled && <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/sftp`, { enable: false }), "SFTP disabled").then(onChange)}>Disable</button>}
+      <p className="dim" style={{ fontSize: 13, marginTop: 0 }}>A chrooted SFTP account jailed to this site only — no shell, no access to other sites. Connect with FileZilla, Cyberduck, or VS Code.</p>
+      <div className="field-grid mt" style={{ alignItems: "end" }}>
+        <div>
+          <label>SFTP password <span className="hint">12+ characters</span></label>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={12} />
+        </div>
+        <div className="row" style={{ paddingBottom: 1 }}>
+          <button disabled={busy || password.length < 12} onClick={() => run(async () => { const r = await api.post<{ host: string; username: string; port: number }>(`/api/sites/${site.id}/sftp`, { enable: true, password }); setInfo(r); }, "SFTP enabled").then(onChange)}>{site.config.sftp_enabled ? "Update password" : "Enable SFTP"}</button>
+          {site.config.sftp_enabled && <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/sftp`, { enable: false }), "SFTP disabled").then(onChange)}>Disable</button>}
+        </div>
       </div>
+      {(site.config.sftp_enabled || info) && (
+        <div className="info-box mt">
+          <div className="kv">
+            <dt>Host</dt><dd className="mono">{info ? info.host.split(":")[0] : site.domain}</dd>
+            <dt>Port</dt><dd className="mono">{info?.port || 22}</dd>
+            <dt>Username</dt><dd className="mono">{info?.username || site.system_user || `slip-site-${site.id}`}</dd>
+          </div>
+        </div>
+      )}
+      {toast.node}
     </div>
   );
 }
