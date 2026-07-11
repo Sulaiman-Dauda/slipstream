@@ -92,14 +92,16 @@ func SizeWorkers(siteMemMB, requested int) Workers {
 }
 
 type poolVars struct {
-	Site     state.Site
-	Socket   string
-	OPcache  OPcache
-	Workers  Workers
-	MemLim   int
-	UploadMB int
-	ExecSec  int
-	TmpDir   string
+	Site        state.Site
+	Socket      string
+	OPcache     OPcache
+	Workers     Workers
+	MemLim      int
+	UploadMB    int
+	ExecSec     int
+	APCuMB      int
+	PreloadFile string
+	TmpDir      string
 }
 
 // RenderPool renders the pool file for a site. siteMemMB is the memory
@@ -127,15 +129,30 @@ func RenderPool(site state.Site, siteMemMB int) (path, content string, err error
 	if site.Config.PHP.MaxExecutionSeconds > 0 {
 		execSec = site.Config.PHP.MaxExecutionSeconds
 	}
+	// APCu shared-memory pool: a share of the site budget, capped so it
+	// never dominates a small box.
+	apcuMB := siteMemMB / 8
+	if apcuMB < 32 {
+		apcuMB = 32
+	}
+	if apcuMB > 256 {
+		apcuMB = 256
+	}
+	preload := ""
+	if site.Type == state.SiteLaravel {
+		preload = filepath.Join(site.RootPath, "current", "slipstream-preload.php")
+	}
 	v := poolVars{
-		Site:     site,
-		Socket:   SocketFor(site.SystemUser),
-		OPcache:  SizeOPcache(siteMemMB, site.Type),
-		Workers:  SizeWorkers(siteMemMB, site.Config.Resources.PHPWorkers),
-		MemLim:   memLim,
-		UploadMB: uploadMB,
-		ExecSec:  execSec,
-		TmpDir:   filepath.Join(site.RootPath, "tmp"),
+		Site:        site,
+		Socket:      SocketFor(site.SystemUser),
+		OPcache:     SizeOPcache(siteMemMB, site.Type),
+		Workers:     SizeWorkers(siteMemMB, site.Config.Resources.PHPWorkers),
+		MemLim:      memLim,
+		UploadMB:    uploadMB,
+		ExecSec:     execSec,
+		APCuMB:      apcuMB,
+		PreloadFile: preload,
+		TmpDir:      filepath.Join(site.RootPath, "tmp"),
 	}
 	var buf bytes.Buffer
 	if err := poolTmpl.Execute(&buf, v); err != nil {
@@ -183,8 +200,16 @@ php_admin_value[upload_max_filesize] = {{.UploadMB}}M
 php_admin_value[post_max_size] = {{.UploadMB}}M
 php_admin_value[max_execution_time] = {{.ExecSec}}
 
+; APCu object cache: in-process shared memory. For a single server this is
+; faster and lighter than Redis (no daemon, no socket, no serialization).
+php_admin_flag[apc.enabled] = on
+php_admin_flag[apc.enable_cli] = off
+php_admin_value[apc.shm_size] = {{.APCuMB}}M
+
 ; Velocity Engine: OPcache sized for this site's memory budget
-php_admin_flag[opcache.enable] = on
+php_admin_flag[opcache.enable] = on{{if .PreloadFile}}
+php_admin_value[opcache.preload] = {{.PreloadFile}}
+php_admin_value[opcache.preload_user] = {{.Site.SystemUser}}{{end}}
 php_admin_value[opcache.memory_consumption] = {{.OPcache.MemoryMB}}
 php_admin_value[opcache.interned_strings_buffer] = {{.OPcache.InternedStringsMB}}
 php_admin_value[opcache.max_accelerated_files] = {{.OPcache.MaxFiles}}

@@ -72,4 +72,6 @@ const (
 	MethodWPObjectCache  = "WPObjectCache"
 	MethodPanelCert      = "PanelCertificate"
 	MethodSelfUpdate     = "SelfUpdate"
+	MethodCacheStats     = "CacheStats"
+	MethodWarmCache      = "WarmCache"
 )

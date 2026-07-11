@@ -32,6 +32,20 @@ final class Slipstream_Connector
         add_action('wp_update_nav_menu', [__CLASS__, 'purge_all']);
         add_action('customize_save_after', [__CLASS__, 'purge_all']);
         add_action('wp_footer', [__CLASS__, 'metrics_comment'], PHP_INT_MAX);
+
+        // WooCommerce cart fragments fire an admin-ajax request on EVERY
+        // anonymous page, punching through the full-page cache. Dequeue it
+        // when the panel enables commerce mode; the cart still works, it
+        // just updates on navigation rather than via a per-page AJAX call.
+        if (defined('SLIPSTREAM_DISABLE_CART_FRAGMENTS') && SLIPSTREAM_DISABLE_CART_FRAGMENTS) {
+            add_action('wp_enqueue_scripts', [__CLASS__, 'kill_cart_fragments'], 11);
+        }
+    }
+
+    public static function kill_cart_fragments(): void
+    {
+        if (is_cart() || is_checkout()) { return; }
+        wp_dequeue_script('wc-cart-fragments');
     }
 
     /** Purge exactly the URLs affected by a post changing, not the site. */

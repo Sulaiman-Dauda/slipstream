@@ -247,6 +247,9 @@ server {
         expires 30d;
         add_header Cache-Control "public, immutable";
         access_log off;
+        # Serve precompressed .gz produced at deploy time instead of
+        # recompressing per request.
+        gzip_static on;
         try_files $uri =404;
     }
 {{- if .IsStatic}}

@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
+	"github.com/slipstream-panel/slipstream/internal/state"
 )
 
 var releaseIDRe = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}$|^initial$`)
@@ -72,6 +73,16 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 
 	if _, err := a.Runner.Run(ctx, "chown", "-R", site.SystemUser+":"+site.SystemUser, releaseDir); err != nil {
 		return rpc.DeployResult{}, err
+	}
+
+	// Precompress static assets in the new release.
+	precompressTree(releaseDir)
+	// Regenerate the Laravel preload file if this is a Laravel app.
+	if site.Type == state.SiteLaravel {
+		if _, err := os.Stat(filepath.Join(releaseDir, "slipstream-preload.php")); err != nil {
+			os.WriteFile(filepath.Join(releaseDir, "slipstream-preload.php"),
+				[]byte("<?php\n// Slipstream OPcache preload.\n"), 0o644)
+		}
 	}
 
 	sum, err := hashTree(releaseDir)

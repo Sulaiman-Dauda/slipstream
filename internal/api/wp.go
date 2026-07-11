@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
@@ -129,4 +130,50 @@ func (s *Server) ensureRedis() error {
 	var out map[string]string
 	// RestartService both starts and enables via systemd restart semantics.
 	return s.Agent.Call(rpc.MethodRestartService, rpc.ServiceParams{Name: "redis"}, &out)
+}
+
+// handleCacheStats reports object-cache effectiveness for a site.
+func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request) {
+	site, ok := s.siteOr404(w, r)
+	if !ok {
+		return
+	}
+	var res rpc.CacheStatsResult
+	if err := s.Agent.Call(rpc.MethodCacheStats, rpc.WPParams{Site: site}, &res); err != nil {
+		respondErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, res)
+}
+
+// handleWarmCache pre-fills the full-page cache from the sitemap.
+func (s *Server) handleWarmCache(w http.ResponseWriter, r *http.Request) {
+	site, ok := s.siteOr404(w, r)
+	if !ok {
+		return
+	}
+	task, err := s.runTask("cache.warm", site.ID, func(progress func(int, string)) error {
+		progress(30, "Warming "+site.Domain+" from sitemap")
+		var res rpc.WarmResult
+		if err := s.Agent.Call(rpc.MethodWarmCache, rpc.WarmParams{Site: site}, &res); err != nil {
+			return err
+		}
+		progress(100, fmt.Sprintf("Warmed %d pages (%d now cached)", res.Warmed, res.Cached))
+		return nil
+	})
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.Store.Audit(s.actor(r), "cache.warm", site.Domain, "")
+	respond(w, http.StatusAccepted, map[string]any{"task": task})
+}
+
+// warmInBackground kicks off cache warming without blocking (used after
+// promote/purge). Errors are swallowed — warming is best-effort.
+func (s *Server) warmInBackground(site state.Site) {
+	go func() {
+		var res rpc.WarmResult
+		s.Agent.Call(rpc.MethodWarmCache, rpc.WarmParams{Site: site}, &res)
+	}()
 }
