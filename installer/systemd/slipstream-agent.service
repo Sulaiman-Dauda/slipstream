@@ -1,0 +1,25 @@
+[Unit]
+Description=Slipstream privileged agent
+After=network.target mariadb.service nginx.service
+Wants=mariadb.service nginx.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/panel-agent
+Restart=on-failure
+RestartSec=2
+
+# Privileged by necessity, hardened where possible.
+RuntimeDirectory=slipstream slipstream/php
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=no
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=no
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
