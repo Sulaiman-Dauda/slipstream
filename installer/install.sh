@@ -10,7 +10,6 @@
 set -euo pipefail
 
 SLIPSTREAM_VERSION="${SLIPSTREAM_VERSION:-1.0.0}"
-PHP_VERSION="8.4"
 BIN_DIR=/usr/local/bin
 RELEASE_URL="${SLIPSTREAM_RELEASE_URL:-https://releases.slipstream.example/${SLIPSTREAM_VERSION}}"
 
@@ -21,7 +20,11 @@ fail() { echo -e "\033[1;31m[slipstream] ERROR:\033[0m $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || fail "run as root: curl -fsSL … | sudo bash"
 
 source /etc/os-release || fail "cannot detect OS"
-[[ "$ID" == "ubuntu" && "$VERSION_ID" == "24.04" ]] || fail "Slipstream supports Ubuntu 24.04 LTS only (found $PRETTY_NAME)"
+case "$ID-$VERSION_ID" in
+  ubuntu-24.04) PHP_VERSION="8.4"; NEED_PHP_PPA=1 ;;  # 24.04 ships 8.3; 8.4 via ondrej PPA
+  ubuntu-26.04) PHP_VERSION="8.5"; NEED_PHP_PPA=0 ;;  # 26.04 ships 8.5 natively
+  *) fail "Slipstream supports Ubuntu 24.04 / 26.04 LTS only (found $PRETTY_NAME)" ;;
+esac
 [[ "$(uname -m)" == "x86_64" ]] || fail "Slipstream supports amd64 only for now"
 
 MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
@@ -38,15 +41,17 @@ done
 
 command -v cpanel >/dev/null 2>&1 && fail "another control panel is installed on this machine"
 
-log "Preflight passed: Ubuntu 24.04, ${MEM_MB} MB RAM, ports free."
+log "Preflight passed: ${PRETTY_NAME}, PHP ${PHP_VERSION}, ${MEM_MB} MB RAM, ports free."
 
 # ---------- packages ----------
 export DEBIAN_FRONTEND=noninteractive
 log "Installing packages (nginx, PHP ${PHP_VERSION}, MariaDB, restic, certbot)…"
 apt-get update -qq
 apt-get install -y -qq software-properties-common curl gnupg ca-certificates >/dev/null
-add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
-apt-get update -qq
+if [[ "$NEED_PHP_PPA" == "1" ]]; then
+  add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
+  apt-get update -qq
+fi
 apt-get install -y -qq \
   nginx mariadb-server redis-server restic certbot \
   "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-curl" \
@@ -70,8 +75,14 @@ id -u slipstream >/dev/null 2>&1 || useradd --system --no-create-home --shell /u
 
 install -d -m 0755 /srv/sites /var/log/slipstream /var/cache/slipstream
 install -d -m 0750 -o slipstream -g slipstream /var/lib/slipstream
-install -d -m 0755 /var/lib/slipstream/acme /run/slipstream /run/slipstream/php
-install -d -m 0700 /var/lib/slipstream/work /etc/slipstream /etc/slipstream/certs
+install -d -m 0755 /var/www/slipstream-acme /run/slipstream /run/slipstream/php
+install -d -m 0700 /var/lib/slipstream/work
+# panel-api (user: slipstream) must traverse into /etc/slipstream to read
+# the agent token and panel TLS certificate.
+install -d -m 0750 -g slipstream /etc/slipstream /etc/slipstream/certs
+
+echo "SLIPSTREAM_PHP_VERSION=${PHP_VERSION}" > /etc/slipstream/panel.env
+chmod 0644 /etc/slipstream/panel.env
 
 if [[ ! -f /etc/slipstream/agent.token ]]; then
   head -c 48 /dev/urandom | base64 | tr -d '/+=' | head -c 48 > /etc/slipstream/agent.token

@@ -74,12 +74,23 @@ func TestQueryRegressionBlocks(t *testing.T) {
 }
 
 func TestLatencyWarnZone(t *testing.T) {
-	// +15% p95 is above half the 25% threshold → warn, not block.
-	base := []Sample{{Path: "/", Requests: 10, P95Millis: 100}}
-	cand := []Sample{{Path: "/", Requests: 10, P95Millis: 115}}
+	// +15% p95 with a 45ms absolute delta: above half the 25% threshold and
+	// above the noise floor → warn, not block.
+	base := []Sample{{Path: "/", Requests: 10, P95Millis: 300}}
+	cand := []Sample{{Path: "/", Requests: 10, P95Millis: 345}}
 	rep := Compare(base, cand, DefaultThresholds())
 	if rep.Verdict != VerdictWarn {
 		t.Fatalf("verdict = %s, want warn; reasons = %v", rep.Verdict, rep.Reasons)
+	}
+}
+
+func TestNoiseFloorsIgnoreTinyDeltas(t *testing.T) {
+	// +25% memory but only 2MB absolute, +15ms p95: both below noise floors.
+	base := []Sample{{Path: "/", Requests: 10, P95Millis: 60, PeakMemBytes: 8 << 20, AvgQueries: 80}}
+	cand := []Sample{{Path: "/", Requests: 10, P95Millis: 75, PeakMemBytes: 10 << 20, AvgQueries: 83}}
+	rep := Compare(base, cand, DefaultThresholds())
+	if rep.Verdict != VerdictPass {
+		t.Fatalf("noise blocked promotion: %s %v", rep.Verdict, rep.Reasons)
 	}
 }
 

@@ -115,7 +115,10 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 	phpVersion := req.PHPVersion
 	needsPHP := siteType != state.SiteStatic && siteType != state.SiteProxy
 	if needsPHP && phpVersion == "" {
-		phpVersion = "8.4"
+		phpVersion = s.DefaultPHP
+		if phpVersion == "" {
+			phpVersion = "8.4"
+		}
 	}
 	if !needsPHP {
 		phpVersion = ""

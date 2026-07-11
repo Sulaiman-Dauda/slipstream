@@ -5,11 +5,20 @@ import (
 	"time"
 )
 
+// Noise floors: percentage regressions only count when the absolute delta
+// is big enough to matter. Without these, a small site "regresses" 25% by
+// allocating two more megabytes.
+const (
+	minP95DeltaMillis = 25.0
+	minQueryDelta     = 5.0
+	minMemDeltaBytes  = 32 << 20
+)
+
 // Compare evaluates a candidate against the production baseline and renders
 // the promote/block verdict.
 //
 // Rules:
-//   - any regression beyond a threshold → block
+//   - any regression beyond a threshold (and its noise floor) → block
 //   - regression beyond half a threshold → warn
 //   - new server errors on the candidate → block, always
 func Compare(baseline, candidate []Sample, t Thresholds) Report {
@@ -36,15 +45,15 @@ func Compare(baseline, candidate []Sample, t Thresholds) Report {
 			continue
 		}
 
-		if t.MaxP95IncreasePct > 0 {
+		if t.MaxP95IncreasePct > 0 && c.P95Millis-b.P95Millis >= minP95DeltaMillis {
 			r.judge(increasePct(b.P95Millis, c.P95Millis), t.MaxP95IncreasePct,
 				"%s: p95 %.0fms → %.0fms (+%.0f%%)", c.Path, b.P95Millis, c.P95Millis)
 		}
-		if t.MaxQueryIncreasePct > 0 && b.AvgQueries > 0 {
+		if t.MaxQueryIncreasePct > 0 && b.AvgQueries > 0 && c.AvgQueries-b.AvgQueries >= minQueryDelta {
 			r.judge(increasePct(b.AvgQueries, c.AvgQueries), t.MaxQueryIncreasePct,
 				"%s: queries %.0f → %.0f (+%.0f%%)", c.Path, b.AvgQueries, c.AvgQueries)
 		}
-		if t.MaxMemIncreasePct > 0 && b.PeakMemBytes > 0 {
+		if t.MaxMemIncreasePct > 0 && b.PeakMemBytes > 0 && c.PeakMemBytes-b.PeakMemBytes >= minMemDeltaBytes {
 			r.judge(increasePct(float64(b.PeakMemBytes), float64(c.PeakMemBytes)), t.MaxMemIncreasePct,
 				"%s: peak memory %dMB → %dMB (+%.0f%%)", c.Path, b.PeakMemBytes>>20, c.PeakMemBytes>>20)
 		}
