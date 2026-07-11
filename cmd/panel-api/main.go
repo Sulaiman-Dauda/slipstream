@@ -75,9 +75,9 @@ func main() {
 
 	// First boot: mint the one-time setup URL.
 	if n, err := store.CountUsers(); err == nil && n == 0 {
-		token := api.NewSetupToken(store, 20*time.Minute)
+		token := api.NewSetupToken(store, 24*time.Hour)
 		logger.Info("setup pending", "url", "https://<server-ip>"+portOf(listen)+"/setup/"+token,
-			"note", "link expires in 20 minutes; restart panel-api to mint a new one")
+			"note", "link valid for 24h; restart panel-api to mint a new one")
 	}
 
 	handler := server.Routes()

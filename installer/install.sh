@@ -180,6 +180,6 @@ log "Installation complete."
 echo
 echo "  Open:  ${SETUP_URL:-https://$IP:5252}"
 echo
-echo "  The setup link expires in 20 minutes."
+echo "  The setup link is valid for 24 hours."
 echo "  (Your browser will warn about the self-signed certificate — expected on first boot.)"
 echo
