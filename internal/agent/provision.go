@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -175,6 +176,9 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 	if site.RootPath == "" {
 		site.RootPath = filepath.Join(a.Paths.SitesRoot, site.Domain)
 	}
+	if err := a.validateSiteRoot(site); err != nil {
+		return rpc.CreateSiteResult{}, err
+	}
 
 	// Any failure before the site is fully provisioned tears down the
 	// half-created user, database and directory tree — otherwise a retry
@@ -185,13 +189,9 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 			return
 		}
 		a.Log.Warn("provisioning failed, rolling back", "site", site.Domain)
-		if site.Config.Database.Enabled && !site.Config.Database.External {
-			a.DropDatabase(rpc.DatabaseParams{Name: site.Config.Database.Name, User: site.Config.Database.User})
+		if _, err := a.DeleteSite(rpc.SiteRef{Site: site}); err != nil {
+			a.Log.Error("provisioning rollback incomplete", "site", site.Domain, "err", err)
 		}
-		if strings.HasPrefix(site.RootPath, a.Paths.SitesRoot+"/") {
-			os.RemoveAll(site.RootPath)
-		}
-		a.Runner.Run(ctx, "userdel", site.SystemUser)
 	}()
 
 	// 1. Isolated Unix identity.
@@ -211,7 +211,12 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 	if _, err := a.Runner.Run(ctx, "chown", "-R", site.SystemUser+":"+site.SystemUser, site.RootPath); err != nil {
 		return rpc.CreateSiteResult{}, err
 	}
-	// Nginx (www-data) needs directory traversal to serve files.
+	// OpenSSH requires every ChrootDirectory component to be root-owned and
+	// non-writable by the jailed user. Children remain site-owned/writable.
+	if _, err := a.Runner.Run(ctx, "chown", "root:"+site.SystemUser, site.RootPath); err != nil {
+		return rpc.CreateSiteResult{}, err
+	}
+	// The site user and Nginx (a member of the site group) need traversal.
 	if _, err := a.Runner.Run(ctx, "chmod", "750", site.RootPath); err != nil {
 		return rpc.CreateSiteResult{}, err
 	}
@@ -286,8 +291,43 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		return result, err
 	}
 	result.Files = files
+	if err := a.verifyProvisionedSite(ctx, site); err != nil {
+		return result, fmt.Errorf("verify provisioned site: %w", err)
+	}
 	provisioned = true
 	return result, nil
+}
+
+func (a *Agent) verifyProvisionedSite(ctx context.Context, site state.Site) error {
+	if _, err := a.Runner.Run(ctx, "id", "-u", site.SystemUser); err != nil {
+		return fmt.Errorf("site identity unavailable: %w", err)
+	}
+	current, err := filepath.EvalSymlinks(filepath.Join(site.RootPath, "current"))
+	if err != nil {
+		return fmt.Errorf("current release unavailable: %w", err)
+	}
+	releases := filepath.Join(site.RootPath, "releases") + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(current)+string(os.PathSeparator), releases) {
+		return fmt.Errorf("current release points outside the site")
+	}
+	if _, err := os.Stat(filepath.Join(a.Paths.NginxSites, site.Domain+".conf")); err != nil {
+		return fmt.Errorf("nginx site configuration unavailable: %w", err)
+	}
+	if site.PHPVersion != "" {
+		poolPath := filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", site.SystemUser+".conf")
+		if a.Paths.PHPPoolRoot == "/etc/php" {
+			poolPath = filepath.Join(phpfpm.PoolDirFor(site.PHPVersion), site.SystemUser+".conf")
+		}
+		if _, err := os.Stat(poolPath); err != nil {
+			return fmt.Errorf("PHP pool configuration unavailable: %w", err)
+		}
+	}
+	if site.Config.Database.Enabled && !site.Config.Database.External {
+		if err := a.mysqlExec(ctx, fmt.Sprintf("USE `%s`; SELECT 1;", site.Config.Database.Name)); err != nil {
+			return fmt.Errorf("database unavailable: %w", err)
+		}
+	}
+	return nil
 }
 
 func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir string, p rpc.CreateSiteParams) error {
@@ -371,35 +411,62 @@ func (a *Agent) DeleteSite(p rpc.SiteRef) (map[string]any, error) {
 	if err := validateSite(site); err != nil {
 		return nil, err
 	}
+	if err := a.validateSiteRoot(site); err != nil {
+		return nil, err
+	}
+	var cleanupErrs []error
+	remove := func(path string) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
 	// Remove rendered config first so nginx stops routing.
-	os.Remove(filepath.Join(a.Paths.NginxSites, site.Domain+".conf"))
-	os.Remove(filepath.Join(a.Paths.NginxConfDir, fmt.Sprintf("slipstream-cache-%d.conf", site.ID)))
+	remove(filepath.Join(a.Paths.NginxSites, site.Domain+".conf"))
+	remove(filepath.Join(a.Paths.NginxConfDir, fmt.Sprintf("slipstream-cache-%d.conf", site.ID)))
 	if site.PHPVersion != "" {
 		poolPath := filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", site.SystemUser+".conf")
 		if a.Paths.PHPPoolRoot == "/etc/php" {
 			poolPath = filepath.Join(phpfpm.PoolDirFor(site.PHPVersion), site.SystemUser+".conf")
 		}
-		os.Remove(poolPath)
-		a.reloadPHPFPM(ctx, site.PHPVersion)
-	}
-	if err := a.reloadNginx(); err != nil {
-		return nil, err
+		remove(poolPath)
 	}
 	if site.Config.Database.Enabled && !site.Config.Database.External {
 		if _, err := a.DropDatabase(rpc.DatabaseParams{Name: site.Config.Database.Name, User: site.Config.Database.User}); err != nil {
-			return nil, err
+			cleanupErrs = append(cleanupErrs, err)
 		}
 	}
-	os.RemoveAll(filepath.Join(a.Paths.CacheRoot, velocity.SanitizeCacheDirName(site.Domain)))
-	if site.RootPath != "" && site.RootPath != "/" {
-		if err := os.RemoveAll(site.RootPath); err != nil {
-			return nil, err
+	if err := os.RemoveAll(filepath.Join(a.Paths.CacheRoot, velocity.SanitizeCacheDirName(site.Domain))); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove cache: %w", err))
+	}
+	if err := os.RemoveAll(site.RootPath); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove site files: %w", err))
+	}
+	// userdel is not idempotent, so only invoke it while the identity exists.
+	if _, err := a.Runner.Run(ctx, "id", "-u", site.SystemUser); err == nil {
+		if _, err := a.Runner.Run(ctx, "userdel", site.SystemUser); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove user: %w", err))
 		}
 	}
-	if _, err := a.Runner.Run(ctx, "userdel", site.SystemUser); err != nil {
-		return nil, err
+	if site.PHPVersion != "" {
+		if err := a.reloadPHPFPM(ctx, site.PHPVersion); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
+		}
+	}
+	if err := a.reloadNginx(); err != nil {
+		cleanupErrs = append(cleanupErrs, err)
+	}
+	if err := errors.Join(cleanupErrs...); err != nil {
+		return nil, fmt.Errorf("site cleanup incomplete: %w", err)
 	}
 	return map[string]any{"deleted": site.Domain}, nil
+}
+
+func (a *Agent) validateSiteRoot(site state.Site) error {
+	expected := filepath.Join(a.Paths.SitesRoot, site.Domain)
+	if filepath.Clean(site.RootPath) != filepath.Clean(expected) {
+		return fmt.Errorf("invalid site root %q: expected %q", site.RootPath, expected)
+	}
+	return nil
 }
 
 // ApplySiteConfig re-renders a site's configuration from desired state.

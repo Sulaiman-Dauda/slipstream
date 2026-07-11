@@ -79,6 +79,48 @@ func (a *Agent) DBExport(p rpc.DBExportParams) (rpc.DBExportResult, error) {
 	return rpc.DBExportResult{Path: dest, SizeBytes: fi.Size()}, nil
 }
 
+// DBImport replaces a managed database from a SQL file inside the site's
+// jailed root. A fresh local dump is restored automatically on any failure.
+func (a *Agent) DBImport(p rpc.DBImportParams) (rpc.DBImportResult, error) {
+	if err := validateSite(p.Site); err != nil {
+		return rpc.DBImportResult{}, err
+	}
+	if err := a.validateSiteRoot(p.Site); err != nil {
+		return rpc.DBImportResult{}, err
+	}
+	if !dbIdentRe.MatchString(p.Database) || p.Database != p.Site.Config.Database.Name {
+		return rpc.DBImportResult{}, fmt.Errorf("invalid database name")
+	}
+	if !strings.HasSuffix(strings.ToLower(strings.TrimSpace(p.RelPath)), ".sql") {
+		return rpc.DBImportResult{}, fmt.Errorf("import file must use the .sql extension")
+	}
+	path, err := resolveInSite(p.Site.RootPath, p.RelPath)
+	if err != nil {
+		return rpc.DBImportResult{}, err
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return rpc.DBImportResult{}, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() == 0 {
+		return rpc.DBImportResult{}, fmt.Errorf("import file must be a non-empty regular file")
+	}
+	safety := filepath.Join(a.Paths.WorkDir, fmt.Sprintf("db-import-safety-%d.sql", time.Now().UnixNano()))
+	defer os.Remove(safety)
+	ctx := context.Background()
+	if err := a.dumpDatabaseFile(ctx, p.Database, safety); err != nil {
+		return rpc.DBImportResult{}, fmt.Errorf("create database rollback point: %w", err)
+	}
+	if err := a.importDatabaseFile(ctx, p.Database, path); err != nil {
+		rollbackErr := a.importDatabaseFile(context.Background(), p.Database, safety)
+		if rollbackErr != nil {
+			return rpc.DBImportResult{}, fmt.Errorf("database import failed: %v; rollback also failed: %v", err, rollbackErr)
+		}
+		return rpc.DBImportResult{}, fmt.Errorf("database import failed and was rolled back: %w", err)
+	}
+	return rpc.DBImportResult{Imported: p.RelPath, SizeBytes: fi.Size()}, nil
+}
+
 // adminerWrapper is the auto-login shim placed next to the cached Adminer.
 // It fills the site's credentials, enforces an expiry, and self-destructs.
 const adminerWrapperTmpl = `<?php

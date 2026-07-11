@@ -36,8 +36,20 @@ func (s *Server) runSchedulerTick() {
 		}
 	}()
 	s.Store.PurgeExpiredAdminerSessions()
+	s.collectMetricSample()
 	s.runScheduledBackups()
 	s.renewCertificatesIfDue()
+}
+
+func (s *Server) collectMetricSample() {
+	var res rpc.SystemStatusResult
+	if err := s.Agent.Call(rpc.MethodSystemStatus, nil, &res); err != nil {
+		return
+	}
+	_ = s.Store.RecordMetric(state.MetricSample{
+		CPUHeadroomPct: res.CPUHeadroomPct, MemHeadroomPct: res.MemHeadroomPct,
+		DiskHeadroomPct: res.DiskHeadroomPct, Load1: res.Load1,
+	})
 }
 
 // dueInterval maps a policy schedule to a minimum spacing between backups.

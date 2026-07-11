@@ -36,7 +36,7 @@ func (c *Client) Call(method string, params any, out any) error {
 		return fmt.Errorf("marshal params: %w", err)
 	}
 
-	conn, err := net.DialTimeout("unix", c.path, 5*time.Second)
+	conn, err := c.dial()
 	if err != nil {
 		return fmt.Errorf("dial agent: %w", err)
 	}
@@ -79,4 +79,22 @@ func (c *Client) Call(method string, params any, out any) error {
 		}
 	}
 	return nil
+}
+
+// dial tolerates the short interval between systemd marking panel-agent
+// active and the process binding its Unix socket. The retry window is
+// deliberately bounded so a genuinely unavailable agent still fails fast.
+func (c *Client) dial() (net.Conn, error) {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		var conn net.Conn
+		conn, err = net.DialTimeout("unix", c.path, time.Second)
+		if err == nil {
+			return conn, nil
+		}
+		if attempt < 4 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return nil, err
 }

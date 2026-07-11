@@ -64,6 +64,10 @@ export default function App() {
   if (!checked) return null;
   if (!me) return <Auth onAuthed={refresh} />;
 
+  const visibleNav = me.role === "operator"
+    ? nav.map((group) => ({ ...group, items: group.items.filter((item) => ["/", "/sites", "/security"].includes(item.to)) })).filter((group) => group.items.length > 0)
+    : nav;
+
   const logout = async () => {
     try {
       await api.post("/api/logout");
@@ -78,7 +82,7 @@ export default function App() {
     <div className="layout">
       <nav className="sidebar">
         <div className="logo"><span className="dot" /> Slipstream</div>
-        {nav.map((group) => (
+        {visibleNav.map((group) => (
           <div key={group.section}>
             <div className="nav-section">{group.section}</div>
             {group.items.map((item) => {

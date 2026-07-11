@@ -149,4 +149,25 @@ CREATE TABLE schedule_state (
 	last_run TEXT NOT NULL
 );
 `,
+	// 3: site-scoped operator access
+	`
+CREATE TABLE user_sites (
+	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+	PRIMARY KEY (user_id, site_id)
+);
+CREATE INDEX idx_user_sites_site ON user_sites(site_id);
+`,
+	// 4: bounded server-capacity history (24 hours at five-minute intervals)
+	`
+CREATE TABLE metric_samples (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	cpu_headroom_pct INTEGER NOT NULL,
+	mem_headroom_pct INTEGER NOT NULL,
+	disk_headroom_pct INTEGER NOT NULL,
+	load1 REAL NOT NULL,
+	sampled_at TEXT NOT NULL
+);
+CREATE INDEX idx_metric_samples_time ON metric_samples(sampled_at);
+`,
 }

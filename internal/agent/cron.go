@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 )
@@ -14,6 +17,21 @@ import (
 // of truth. A managed header marks it.
 
 var crontabSafe = regexp.MustCompile(`^[\x20-\x7e]*$`) // printable ASCII only
+
+type tailWriter struct {
+	buf []byte
+	max int
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > w.max {
+		copy(w.buf, w.buf[len(w.buf)-w.max:])
+		w.buf = w.buf[:w.max]
+	}
+	return n, nil
+}
 
 // WriteCrontab replaces a site user's crontab with panel-rendered content.
 func (a *Agent) WriteCrontab(p rpc.CrontabParams) (map[string]string, error) {
@@ -52,6 +70,28 @@ func (a *Agent) WriteCrontab(p rpc.CrontabParams) (map[string]string, error) {
 		return nil, fmt.Errorf("install crontab: %w", err)
 	}
 	return map[string]string{"crontab": "installed"}, nil
+}
+
+// RunCron executes one job on demand with the same unprivileged identity as
+// cron. It is time-bounded and returns only the final 64 KiB of output.
+func (a *Agent) RunCron(p rpc.RunCronParams) (rpc.RunCronResult, error) {
+	if !systemUserRe.MatchString(p.SystemUser) || strings.TrimSpace(p.Command) == "" || strings.ContainsAny(p.Command, "\r\n") {
+		return rpc.RunCronResult{}, fmt.Errorf("invalid cron command")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "runuser", "-u", p.SystemUser, "--", "/bin/sh", "-c", p.Command)
+	output := tailWriter{max: 64 << 10}
+	cmd.Stdout, cmd.Stderr = &output, &output
+	err := cmd.Run()
+	text := string(output.buf)
+	if ctx.Err() == context.DeadlineExceeded {
+		return rpc.RunCronResult{Status: "timeout", Output: text}, nil
+	}
+	if err != nil {
+		return rpc.RunCronResult{Status: "failed", Output: text}, nil
+	}
+	return rpc.RunCronResult{Status: "succeeded", Output: text}, nil
 }
 
 func splitLines(s string) []string {

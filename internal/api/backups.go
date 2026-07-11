@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
@@ -107,6 +108,10 @@ func (s *Server) handleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if !s.canAccessSite(r, site.ID) {
+		respondErr(w, http.StatusNotFound, "backup not found")
+		return
+	}
 	_, password, ok := s.backupConfig(w)
 	if !ok {
 		return
@@ -140,3 +145,76 @@ func (s *Server) handleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusAccepted, map[string]any{"task": task})
 }
 
+func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	backup, err := s.Store.GetBackup(id)
+	if errors.Is(err, state.ErrNotFound) {
+		respondErr(w, http.StatusNotFound, "backup not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	site, err := s.Store.GetSite(backup.SiteID)
+	if err != nil || !s.canAccessSite(r, backup.SiteID) {
+		respondErr(w, http.StatusNotFound, "backup not found")
+		return
+	}
+	var req struct {
+		Confirm string `json:"confirm"`
+		Mode    string `json:"mode"`
+	}
+	if err := decode(r, &req); err != nil || req.Confirm != site.Domain {
+		respondErr(w, http.StatusBadRequest, "type the site domain to confirm restoration")
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "full"
+	}
+	if req.Mode != "full" && req.Mode != "files" && req.Mode != "database" {
+		respondErr(w, http.StatusBadRequest, "restore mode must be full, files, or database")
+		return
+	}
+	_, password, ok := s.backupConfig(w)
+	if !ok {
+		return
+	}
+	s.Store.Audit(s.actor(r), "backup.restore", site.Domain, backup.SnapshotID)
+	task, err := s.runTask("backup.restore", site.ID, func(progress func(int, string)) error {
+		progress(10, "Creating a pre-restore safety snapshot")
+		var safety rpc.BackupResult
+		if err := s.Agent.Call(rpc.MethodRunBackup, rpc.BackupParams{
+			Site: site, Repository: backup.Repository, Password: password, Kind: "full",
+		}, &safety); err != nil {
+			return fmt.Errorf("safety snapshot failed; production was not changed: %w", err)
+		}
+		if _, err := s.Store.CreateBackup(state.Backup{
+			SiteID: site.ID, SnapshotID: safety.SnapshotID, Repository: backup.Repository,
+			SizeBytes: safety.SizeBytes, Kind: "pre-restore",
+		}); err != nil {
+			return fmt.Errorf("record safety snapshot: %w", err)
+		}
+		progress(35, "Safety snapshot stored as "+safety.SnapshotID)
+		progress(45, "Restoring and validating "+backup.SnapshotID+" ("+req.Mode+")")
+		var out map[string]string
+		if err := s.Agent.Call(rpc.MethodRestoreSnapshot, rpc.RestoreParams{
+			Site: site, Repository: backup.Repository, Password: password, SnapshotID: backup.SnapshotID, Mode: req.Mode,
+		}, &out); err != nil {
+			return err
+		}
+		progress(90, "Purging restored site cache")
+		s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: site}, nil)
+		progress(100, "Restore complete; rollback snapshot "+safety.SnapshotID+" is retained")
+		return nil
+	})
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respond(w, http.StatusAccepted, map[string]any{"task": task})
+}

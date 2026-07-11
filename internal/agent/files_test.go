@@ -2,9 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/slipstream-panel/slipstream/internal/rpc"
 )
 
 // fakeFailRunner fails every command, exercising fallback paths.
@@ -51,6 +56,63 @@ func TestResolveInSiteJail(t *testing.T) {
 	os.Symlink("/etc", root+"/evil")
 	if _, err := resolveInSite(root, "evil/passwd"); err == nil {
 		t.Error("symlink escape was not rejected")
+	}
+}
+
+func TestManagedFileWorkflow(t *testing.T) {
+	a, _ := testAgent(t)
+	site := staticSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: site}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ManageFile(rpc.ManageFileParams{Site: site, Operation: "mkdir", RelPath: "shared/assets"}); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte{0, 1, 2, 3, 255}
+	if _, err := a.TransferFile(rpc.TransferFileParams{Site: site, RelPath: "shared/assets/blob.bin", Data: data, Upload: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.TransferFile(rpc.TransferFileParams{Site: site, RelPath: "shared/assets/blob.bin"})
+	if err != nil || string(got.Data) != string(data) {
+		t.Fatalf("download = %v, %v", got.Data, err)
+	}
+	if _, err := a.ManageFile(rpc.ManageFileParams{Site: site, Operation: "rename", RelPath: "shared/assets/blob.bin", DestPath: "shared/assets/renamed.bin"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(site.RootPath, "shared/assets/renamed.bin")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ManageFile(rpc.ManageFileParams{Site: site, Operation: "delete", RelPath: "shared/assets"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(site.RootPath, "shared/assets")); !os.IsNotExist(err) {
+		t.Fatalf("deleted directory still exists: %v", err)
+	}
+	if _, err := a.TransferFile(rpc.TransferFileParams{Site: site, RelPath: "too-big", Data: []byte(strings.Repeat("x", maxTransferFile+1)), Upload: true}); err == nil {
+		t.Fatal("oversized upload accepted")
+	}
+}
+
+func TestSSHKeyWorkflow(t *testing.T) {
+	a, _ := testAgent(t)
+	site := staticSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: site}); err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 48)))
+	added, err := a.SSHKeys(rpc.SSHKeyParams{Site: site, Action: "add", PublicKey: "ssh-ed25519 " + encoded + " dev@laptop"})
+	if err != nil || len(added.Keys) != 1 || added.Keys[0].Label != "dev@laptop" {
+		t.Fatalf("add key = %+v, %v", added, err)
+	}
+	if _, err := a.SSHKeys(rpc.SSHKeyParams{Site: site, Action: "add", PublicKey: "ssh-ed25519 " + encoded}); err == nil {
+		t.Fatal("duplicate key accepted")
+	}
+	removed, err := a.SSHKeys(rpc.SSHKeyParams{Site: site, Action: "delete", Fingerprint: added.Keys[0].Fingerprint})
+	if err != nil || len(removed.Keys) != 0 {
+		t.Fatalf("delete key = %+v, %v", removed, err)
+	}
+	if _, err := a.SSHKeys(rpc.SSHKeyParams{Site: site, Action: "add", PublicKey: "ssh-dss invalid"}); err == nil {
+		t.Fatal("unsupported key accepted")
 	}
 }
 

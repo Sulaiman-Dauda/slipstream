@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,6 +30,63 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	s2.Close()
+}
+
+func TestOpenRestrictsDatabasePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("state database mode = %04o, want 0640", got)
+	}
+}
+
+func TestMetricHistoryIsBoundedAndChronological(t *testing.T) {
+	s := testStore(t)
+	for i := 0; i < 300; i++ {
+		if err := s.RecordMetric(MetricSample{CPUHeadroomPct: i, MemHeadroomPct: 80, DiskHeadroomPct: 70}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metrics, err := s.ListMetrics(400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 288 {
+		t.Fatalf("retained metrics = %d, want 288", len(metrics))
+	}
+	if metrics[0].CPUHeadroomPct != 12 || metrics[len(metrics)-1].CPUHeadroomPct != 299 {
+		t.Fatalf("metrics not chronological/bounded: first=%d last=%d", metrics[0].CPUHeadroomPct, metrics[len(metrics)-1].CPUHeadroomPct)
+	}
+}
+
+func TestListUsersIncludesAssignmentsWithoutConnectionDeadlock(t *testing.T) {
+	s := testStore(t)
+	site, err := s.CreateSite(Site{Domain: "assigned.example.com", Type: SiteStatic, Profile: ProfileBalanced, Engine: EngineNginx, SystemUser: "slip-site-1", RootPath: "/srv/sites/assigned.example.com", Status: SiteActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := s.CreateUser("operator@example.com", "test-hash", "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetUserSites(user.ID, []int64{site.ID}); err != nil {
+		t.Fatal(err)
+	}
+	users, err := s.ListUsers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || len(users[0].SiteIDs) != 1 || users[0].SiteIDs[0] != site.ID {
+		t.Fatalf("users with assignments = %+v", users)
+	}
 }
 
 func TestSiteCRUD(t *testing.T) {

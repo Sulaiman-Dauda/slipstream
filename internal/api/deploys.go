@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/guard"
@@ -99,6 +100,10 @@ func (s *Server) handlePromote(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if !s.canAccessSite(r, site.ID) {
+		respondErr(w, http.StatusNotFound, "deployment not found")
+		return
+	}
 	s.Store.Audit(s.actor(r), "deploy.promote", site.Domain, dep.ReleaseID)
 
 	task, err := s.runTask("deploy.promote", site.ID, func(progress func(int, string)) error {
@@ -160,6 +165,105 @@ type safePushRequest struct {
 	Paths []string `json:"paths"`
 	// Force promotes even on a warn verdict (never on block).
 	Force bool `json:"force"`
+}
+
+func protectedPromotionTable(site state.Site, table string) bool {
+	t := strings.ToLower(table)
+	if strings.HasSuffix(t, "_users") || strings.HasSuffix(t, "_usermeta") {
+		return true
+	}
+	if site.Type != state.SiteWooCommerce {
+		return false
+	}
+	for _, suffix := range []string{"_posts", "_postmeta", "_comments", "_commentmeta", "_woocommerce_sessions"} {
+		if strings.HasSuffix(t, suffix) {
+			return true
+		}
+	}
+	return strings.Contains(t, "_actionscheduler_") || strings.Contains(t, "_wc_order") || strings.Contains(t, "_woocommerce_order")
+}
+
+func (s *Server) handleStagingTables(w http.ResponseWriter, r *http.Request) {
+	prod, ok := s.siteOr404(w, r)
+	if !ok {
+		return
+	}
+	stg, err := s.Store.StagingSiteFor(prod.ID)
+	if err != nil {
+		respondErr(w, http.StatusPreconditionFailed, "create a staging site first")
+		return
+	}
+	var res rpc.DBQueryResult
+	if err := s.Agent.Call(rpc.MethodDBQuery, rpc.DBQueryParams{Database: stg.Config.Database.Name, SQL: "SHOW TABLES"}, &res); err != nil {
+		respondErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	tables := make([]map[string]any, 0, len(res.Rows))
+	for _, row := range res.Rows {
+		if len(row) > 0 {
+			tables = append(tables, map[string]any{"name": row[0], "protected": protectedPromotionTable(prod, row[0])})
+		}
+	}
+	respond(w, http.StatusOK, map[string]any{"tables": tables, "staging": stg.Domain})
+}
+
+func (s *Server) handlePushStagingDatabase(w http.ResponseWriter, r *http.Request) {
+	prod, ok := s.siteOr404(w, r)
+	if !ok {
+		return
+	}
+	stg, err := s.Store.StagingSiteFor(prod.ID)
+	if err != nil {
+		respondErr(w, http.StatusPreconditionFailed, "create a staging site first")
+		return
+	}
+	var req struct {
+		Tables  []string `json:"tables"`
+		Confirm string   `json:"confirm"`
+	}
+	if err := decode(r, &req); err != nil || req.Confirm != prod.Domain {
+		respondErr(w, http.StatusBadRequest, "type the production domain to confirm database promotion")
+		return
+	}
+	if len(req.Tables) == 0 || len(req.Tables) > 50 {
+		respondErr(w, http.StatusBadRequest, "select between 1 and 50 tables")
+		return
+	}
+	for _, table := range req.Tables {
+		if protectedPromotionTable(prod, table) {
+			respondErr(w, http.StatusBadRequest, "selection contains protected live data table "+table)
+			return
+		}
+	}
+	repo, password, ok := s.backupConfig(w)
+	if !ok {
+		return
+	}
+	s.Store.Audit(s.actor(r), "staging.database-push", prod.Domain, strings.Join(req.Tables, ","))
+	task, err := s.runTask("staging.database-push", prod.ID, func(progress func(int, string)) error {
+		progress(10, "Creating off-site production safety snapshot")
+		var safety rpc.BackupResult
+		if err := s.Agent.Call(rpc.MethodRunBackup, rpc.BackupParams{Site: prod, Repository: repo, Password: password, Kind: "full"}, &safety); err != nil {
+			return fmt.Errorf("safety snapshot failed; production was not changed: %w", err)
+		}
+		if _, err := s.Store.CreateBackup(state.Backup{SiteID: prod.ID, SnapshotID: safety.SnapshotID, Repository: repo, SizeBytes: safety.SizeBytes, Kind: "pre-database-push"}); err != nil {
+			return err
+		}
+		progress(45, fmt.Sprintf("Promoting %d selected tables", len(req.Tables)))
+		var out map[string]any
+		if err := s.Agent.Call(rpc.MethodSyncStagingDB, rpc.SyncStagingDBParams{Production: prod, Staging: stg, Tables: req.Tables}, &out); err != nil {
+			return err
+		}
+		progress(90, "Purging production cache")
+		s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: prod}, nil)
+		progress(100, "Selected database tables promoted; safety snapshot "+safety.SnapshotID+" retained")
+		return nil
+	})
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respond(w, http.StatusAccepted, map[string]any{"task": task})
 }
 
 // handleSafePush is the flagship flow: measure staging against production
@@ -243,8 +347,32 @@ func (s *Server) handleSafePush(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Store.SetDeploymentStatus(dep.ID, state.DeployPromoted, "")
 		s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: prod}, nil)
+
+		progress(90, "Verifying production after promotion")
+		liveProber := &guard.Prober{Target: probeTarget, Host: prod.Domain}
+		live, liveErr := liveProber.Measure(ctx, paths)
+		if liveErr != nil {
+			if rollbackErr := s.Agent.Call(rpc.MethodRollbackRelease, rpc.ReleaseParams{Site: prod}, nil); rollbackErr != nil {
+				return fmt.Errorf("post-promotion verification failed (%v) and automatic rollback failed: %w", liveErr, rollbackErr)
+			}
+			s.Store.SetDeploymentStatus(dep.ID, state.DeployRolledBack, "")
+			s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: prod}, nil)
+			return fmt.Errorf("post-promotion verification failed; automatically rolled back: %w", liveErr)
+		}
+		liveReport := guard.Compare(baseline, live, guard.DefaultThresholds())
+		liveJSON, _ := json.Marshal(liveReport)
+		if liveReport.Verdict == guard.VerdictBlock {
+			progress(94, "Production regression detected — rolling back automatically")
+			if rollbackErr := s.Agent.Call(rpc.MethodRollbackRelease, rpc.ReleaseParams{Site: prod}, nil); rollbackErr != nil {
+				return fmt.Errorf("production regressed and automatic rollback failed: %w", rollbackErr)
+			}
+			s.Store.SetDeploymentStatus(dep.ID, state.DeployRolledBack, string(liveJSON))
+			s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: prod}, nil)
+			return fmt.Errorf("production regression detected; automatically rolled back: %s", strings.Join(liveReport.Reasons, "; "))
+		}
+		s.Store.SetDeploymentStatus(dep.ID, state.DeployPromoted, string(liveJSON))
 		s.warmInBackground(prod)
-		progress(100, "Safe push complete: "+releaseID+" is live")
+		progress(100, "Safe push verified: "+releaseID+" is live")
 		return nil
 	})
 	if err != nil {

@@ -155,9 +155,10 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createUserRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Role     string `json:"role"`
+	Email    string  `json:"email"`
+	Password string  `json:"password"`
+	Role     string  `json:"role"`
+	SiteIDs  []int64 `json:"site_ids"`
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -175,8 +176,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := req.Role
-	if role != "admin" && role != "readonly" {
+	if role != "admin" && role != "operator" && role != "readonly" {
 		role = "admin"
+	}
+	if role == "operator" && len(req.SiteIDs) == 0 {
+		respondErr(w, http.StatusBadRequest, "assign at least one site to an operator")
+		return
 	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
@@ -191,6 +196,14 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if role == "operator" {
+		if err := s.Store.SetUserSites(user.ID, req.SiteIDs); err != nil {
+			s.Store.DeleteUser(user.ID)
+			respondErr(w, http.StatusBadRequest, "invalid site assignment")
+			return
+		}
+		user.SiteIDs = req.SiteIDs
 	}
 	s.Store.Audit(s.actor(r), "user.create", user.Email, role)
 	respond(w, http.StatusCreated, user)
@@ -208,7 +221,17 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	users, _ := s.Store.ListUsers()
-	if len(users) <= 1 {
+	adminCount := 0
+	targetIsAdmin := false
+	for _, user := range users {
+		if user.Role == "admin" {
+			adminCount++
+		}
+		if user.ID == id {
+			targetIsAdmin = user.Role == "admin"
+		}
+	}
+	if targetIsAdmin && adminCount <= 1 {
 		respondErr(w, http.StatusBadRequest, "cannot delete the last administrator")
 		return
 	}

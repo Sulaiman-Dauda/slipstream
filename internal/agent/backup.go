@@ -7,11 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 )
+
+var snapshotIDRe = regexp.MustCompile(`^[a-fA-F0-9]{8,64}$`)
 
 // Backups use Restic: encrypted, deduplicated, off-site. The repository
 // password never appears in argv (visible in /proc) — it is passed through
@@ -80,9 +83,9 @@ func (a *Agent) RunBackup(p rpc.BackupParams) (rpc.BackupResult, error) {
 	var size int64
 	for _, line := range strings.Split(out, "\n") {
 		var msg struct {
-			MessageType    string `json:"message_type"`
-			SnapshotID     string `json:"snapshot_id"`
-			TotalBytes     int64  `json:"total_bytes_processed"`
+			MessageType string `json:"message_type"`
+			SnapshotID  string `json:"snapshot_id"`
+			TotalBytes  int64  `json:"total_bytes_processed"`
 		}
 		if json.Unmarshal([]byte(line), &msg) == nil && msg.MessageType == "summary" {
 			snapshotID, size = msg.SnapshotID, msg.TotalBytes
@@ -118,30 +121,183 @@ func (a *Agent) TestBackup(p rpc.BackupParams) (map[string]any, error) {
 // a target directory (verified restore tests, cross-server moves).
 func (a *Agent) RestoreSnapshot(p rpc.RestoreParams) (map[string]string, error) {
 	ctx := context.Background()
+	mode := strings.ToLower(strings.TrimSpace(p.Mode))
+	if mode == "" {
+		mode = "full"
+	}
+	if mode != "full" && mode != "files" && mode != "database" {
+		return nil, fmt.Errorf("restore mode must be full, files, or database")
+	}
 	if err := validateSite(p.Site); err != nil {
 		return nil, err
 	}
-	target := p.TargetDir
-	inPlace := target == ""
-	if inPlace {
-		target = "/"
-	}
-	if _, err := a.restic(ctx, p.Password, "-r", p.Repository, "restore", p.SnapshotID, "--target", target); err != nil {
+	if err := a.validateSiteRoot(p.Site); err != nil {
 		return nil, err
 	}
-	if inPlace {
-		if _, err := a.Runner.Run(ctx, "chown", "-R", p.Site.SystemUser+":"+p.Site.SystemUser, p.Site.RootPath); err != nil {
+	if !snapshotIDRe.MatchString(p.SnapshotID) {
+		return nil, fmt.Errorf("invalid snapshot id")
+	}
+	target := p.TargetDir
+	inPlace := target == ""
+	if !inPlace {
+		if _, err := a.restic(ctx, p.Password, "-r", p.Repository, "restore", p.SnapshotID, "--target", target); err != nil {
 			return nil, err
 		}
-		// Re-import the database dump captured in the snapshot.
-		dump := filepath.Join(p.Site.RootPath, "logs", "db-latest.sql")
-		if _, err := os.Stat(dump); err == nil && p.Site.Config.Database.Enabled && !p.Site.Config.Database.External {
-			if _, err := a.Runner.Run(ctx, "mariadb", "--protocol=socket", p.Site.Config.Database.Name, "-e", "source "+dump); err != nil {
-				return nil, fmt.Errorf("database restore: %w", err)
-			}
+		return map[string]string{"restored": p.SnapshotID, "target": target}, nil
+	}
+
+	scratch := filepath.Join(a.Paths.WorkDir, "restore-"+p.SnapshotID)
+	if err := os.RemoveAll(scratch); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(scratch, 0o700); err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(scratch)
+	if _, err := a.restic(ctx, p.Password, "-r", p.Repository, "restore", p.SnapshotID, "--target", scratch); err != nil {
+		return nil, err
+	}
+	restoredRoot := filepath.Join(scratch, p.Site.RootPath)
+	if fi, err := os.Stat(restoredRoot); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("snapshot does not contain site root")
+	}
+	if mode != "database" {
+		currentTarget, err := os.Readlink(filepath.Join(restoredRoot, "current"))
+		if err != nil || !strings.HasPrefix(filepath.Clean(currentTarget), filepath.Join(p.Site.RootPath, "releases")+string(os.PathSeparator)) {
+			return nil, fmt.Errorf("snapshot has no valid current release")
 		}
 	}
-	return map[string]string{"restored": p.SnapshotID, "target": target}, nil
+
+	managedDB := p.Site.Config.Database.Enabled && !p.Site.Config.Database.External
+	restoredDump := filepath.Join(restoredRoot, "logs", "db-latest.sql")
+	safetyDB := filepath.Join(a.Paths.WorkDir, "restore-safety-"+p.SnapshotID+".sql")
+	defer os.Remove(safetyDB)
+	restoreDatabase := func() error {
+		if !managedDB {
+			return fmt.Errorf("site has no managed database to restore")
+		}
+		if fi, err := os.Stat(restoredDump); err != nil || fi.IsDir() {
+			return fmt.Errorf("snapshot does not contain a database dump")
+		}
+		if err := a.dumpDatabaseFile(ctx, p.Site.Config.Database.Name, safetyDB); err != nil {
+			return fmt.Errorf("create database rollback point: %w", err)
+		}
+		if err := a.importDatabaseFile(ctx, p.Site.Config.Database.Name, restoredDump); err != nil {
+			_ = a.importDatabaseFile(context.Background(), p.Site.Config.Database.Name, safetyDB)
+			return fmt.Errorf("database restore: %w", err)
+		}
+		return nil
+	}
+	if mode == "database" {
+		if err := restoreDatabase(); err != nil {
+			return nil, err
+		}
+		return map[string]string{"restored": p.SnapshotID, "target": p.Site.Config.Database.Name, "mode": mode}, nil
+	}
+
+	newRoot := p.Site.RootPath + ".restore-new"
+	oldRoot := p.Site.RootPath + ".restore-old"
+	os.RemoveAll(newRoot)
+	os.RemoveAll(oldRoot)
+	if _, err := a.Runner.Run(ctx, "cp", "-a", restoredRoot, newRoot); err != nil {
+		return nil, fmt.Errorf("prepare restored files: %w", err)
+	}
+	if _, err := a.Runner.Run(ctx, "chown", "-R", p.Site.SystemUser+":"+p.Site.SystemUser, newRoot); err != nil {
+		return nil, err
+	}
+	if _, err := a.Runner.Run(ctx, "chown", "root:"+p.Site.SystemUser, newRoot); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(newRoot, 0o750); err != nil {
+		return nil, err
+	}
+
+	hasDB := mode == "full" && managedDB
+	if hasDB {
+		if err := restoreDatabase(); err != nil {
+			return nil, err
+		}
+	}
+
+	rollbackDB := func() {
+		if hasDB {
+			a.importDatabaseFile(context.Background(), p.Site.Config.Database.Name, safetyDB)
+		}
+	}
+	if err := os.Rename(p.Site.RootPath, oldRoot); err != nil {
+		rollbackDB()
+		return nil, fmt.Errorf("stage current files: %w", err)
+	}
+	if err := os.Rename(newRoot, p.Site.RootPath); err != nil {
+		os.Rename(oldRoot, p.Site.RootPath)
+		rollbackDB()
+		return nil, fmt.Errorf("activate restored files: %w", err)
+	}
+	rollbackFiles := func() {
+		os.RemoveAll(newRoot)
+		os.Rename(p.Site.RootPath, newRoot)
+		os.Rename(oldRoot, p.Site.RootPath)
+		rollbackDB()
+		if p.Site.PHPVersion != "" {
+			a.reloadPHPFPM(context.Background(), p.Site.PHPVersion)
+		}
+		a.reloadNginx()
+	}
+	if p.Site.PHPVersion != "" {
+		if err := a.reloadPHPFPM(ctx, p.Site.PHPVersion); err != nil {
+			rollbackFiles()
+			return nil, fmt.Errorf("reload PHP after restore: %w", err)
+		}
+	}
+	if err := a.reloadNginx(); err != nil {
+		rollbackFiles()
+		return nil, fmt.Errorf("reload nginx after restore: %w", err)
+	}
+	if _, err := filepath.EvalSymlinks(filepath.Join(p.Site.RootPath, "current")); err != nil {
+		rollbackFiles()
+		return nil, fmt.Errorf("restored release verification failed: %w", err)
+	}
+	os.RemoveAll(oldRoot)
+	os.RemoveAll(filepath.Join(a.Paths.CacheRoot, p.Site.Domain))
+	return map[string]string{"restored": p.SnapshotID, "target": p.Site.RootPath, "mode": mode}, nil
+}
+
+func (a *Agent) dumpDatabaseFile(ctx context.Context, database, path string) error {
+	if !dbIdentRe.MatchString(database) {
+		return fmt.Errorf("invalid database name")
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cmd := exec.CommandContext(ctx, "mariadb-dump", "--protocol=socket", "--single-transaction", database)
+	cmd.Stdout = f
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mariadb-dump: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return f.Sync()
+}
+
+func (a *Agent) importDatabaseFile(ctx context.Context, database, path string) error {
+	if !dbIdentRe.MatchString(database) {
+		return fmt.Errorf("invalid database name")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cmd := exec.CommandContext(ctx, "mariadb", "--protocol=socket", database)
+	cmd.Stdin = f
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mariadb import: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // VerifyBackup is the feature competitors skip: actually restore the

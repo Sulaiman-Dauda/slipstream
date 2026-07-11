@@ -40,6 +40,13 @@ func (s *Server) handleRestartService(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReadLog(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	site := r.URL.Query().Get("site")
+	if user, _ := s.sessionUser(r); user.Role == "operator" {
+		managed, err := s.Store.GetSiteByDomain(site)
+		if err != nil || !s.canAccessSite(r, managed.ID) {
+			respondErr(w, http.StatusNotFound, "log not found")
+			return
+		}
+	}
 	lines, _ := strconv.Atoi(r.URL.Query().Get("lines"))
 	if lines <= 0 {
 		lines = 200

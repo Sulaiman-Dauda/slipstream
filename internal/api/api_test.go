@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -165,6 +166,31 @@ func TestSetupAndAuthFlow(t *testing.T) {
 	}
 }
 
+func TestConnectorRoutesExposeOnlyConnectorSurface(t *testing.T) {
+	s, _, _ := testServer(t)
+	ts := httptest.NewServer(s.ConnectorRoutes())
+	defer ts.Close()
+
+	for _, path := range []string{"/", "/api/bootstrap", "/api/login", "/api/sites"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s = %d, want restricted route", path, resp.StatusCode)
+		}
+	}
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /healthz = %d, want 200", resp.StatusCode)
+	}
+}
+
 func waitForTasks(t *testing.T, s *Server) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -289,6 +315,163 @@ func TestConnectorPurgeAuth(t *testing.T) {
 	}
 	if agent.called(rpc.MethodPurgeCache) {
 		t.Fatal("foreign URL must not reach the agent")
+	}
+}
+
+func TestDeleteFailurePreservesDesiredState(t *testing.T) {
+	s, agent, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+	resp, body := c.do("POST", "/api/sites", map[string]any{"domain": "keep.example.com", "type": "static"})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create site = %d %s", resp.StatusCode, body)
+	}
+	waitForTasks(t, s)
+	site, err := s.Store.GetSiteByDomain("keep.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.errs[rpc.MethodDeleteSite] = fmt.Errorf("simulated cleanup failure")
+	resp, body = c.do("DELETE", fmt.Sprintf("/api/sites/%d", site.ID), nil)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete site = %d %s", resp.StatusCode, body)
+	}
+	waitForTasks(t, s)
+	kept, err := s.Store.GetSite(site.ID)
+	if err != nil {
+		t.Fatalf("failed deletion removed desired state: %v", err)
+	}
+	if kept.Status != state.SiteError {
+		t.Fatalf("site status = %s, want error", kept.Status)
+	}
+}
+
+func TestCreateFailureRollsBackStateAndAllowsRetry(t *testing.T) {
+	s, agent, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+	agent.errs[rpc.MethodCreateSite] = fmt.Errorf("simulated provisioning failure")
+	resp, body := c.do("POST", "/api/sites", map[string]any{"domain": "retry.example.com", "type": "static"})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create site = %d %s", resp.StatusCode, body)
+	}
+	waitForTasks(t, s)
+	if _, err := s.Store.GetSiteByDomain("retry.example.com"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("failed provisioning retained partial site: %v", err)
+	}
+	delete(agent.errs, rpc.MethodCreateSite)
+	resp, body = c.do("POST", "/api/sites", map[string]any{"domain": "retry.example.com", "type": "static"})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("retry create = %d %s", resp.StatusCode, body)
+	}
+	waitForTasks(t, s)
+	if _, err := s.Store.GetSiteByDomain("retry.example.com"); err != nil {
+		t.Fatalf("retry did not create site: %v", err)
+	}
+}
+
+func TestOperatorIsRestrictedToAssignedSites(t *testing.T) {
+	s, _, ts := testServer(t)
+	admin := setupAdmin(t, s, ts)
+	for _, domain := range []string{"assigned.example.com", "private.example.com"} {
+		resp, body := admin.do("POST", "/api/sites", map[string]any{"domain": domain, "type": "static"})
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("create %s = %d %s", domain, resp.StatusCode, body)
+		}
+		waitForTasks(t, s)
+	}
+	assigned, _ := s.Store.GetSiteByDomain("assigned.example.com")
+	resp, body := admin.do("POST", "/api/users", map[string]any{
+		"email": "operator@example.com", "password": "operator-password!", "role": "operator", "site_ids": []int64{assigned.ID},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create operator = %d %s", resp.StatusCode, body)
+	}
+	op := &client{t: t, base: ts.URL}
+	resp, body = op.do("POST", "/api/login", map[string]string{"email": "operator@example.com", "password": "operator-password!"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("operator login = %d %s", resp.StatusCode, body)
+	}
+	resp, body = op.do("GET", "/api/sites", nil)
+	var visible []state.Site
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(body, &visible) != nil || len(visible) != 1 || visible[0].ID != assigned.ID {
+		t.Fatalf("operator sites = %d %s", resp.StatusCode, body)
+	}
+	private, _ := s.Store.GetSiteByDomain("private.example.com")
+	if resp, _ := op.do("GET", fmt.Sprintf("/api/sites/%d", private.ID), nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unassigned site = %d, want 404", resp.StatusCode)
+	}
+	if resp, _ := op.do("POST", fmt.Sprintf("/api/sites/%d/purge", assigned.ID), map[string]any{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("assigned mutation = %d", resp.StatusCode)
+	}
+	if resp, _ := op.do("GET", "/api/users", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("global users = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestRestoreRequiresConfirmationAndSafetySnapshot(t *testing.T) {
+	s, agent, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+	resp, _ := c.do("POST", "/api/sites", map[string]any{"domain": "restore.example.com", "type": "static"})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatal("site create failed")
+	}
+	waitForTasks(t, s)
+	site, _ := s.Store.GetSiteByDomain("restore.example.com")
+	s.Store.SetSetting("backup_repository", "/tmp/test-repo")
+	s.Store.SetSetting("backup_password", "test-repository-password")
+	backup, err := s.Store.CreateBackup(state.Backup{SiteID: site.ID, SnapshotID: "abcdef1234567890", Repository: "/tmp/test-repo", Kind: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.results[rpc.MethodRunBackup] = rpc.BackupResult{SnapshotID: "fedcba0987654321", SizeBytes: 42}
+	if resp, _ := c.do("POST", fmt.Sprintf("/api/backups/%d/restore", backup.ID), map[string]string{"confirm": "wrong"}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("wrong confirmation = %d", resp.StatusCode)
+	}
+	if resp, _ := c.do("POST", fmt.Sprintf("/api/backups/%d/restore", backup.ID), map[string]string{"confirm": site.Domain, "mode": "everything"}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid restore mode = %d", resp.StatusCode)
+	}
+	resp, body := c.do("POST", fmt.Sprintf("/api/backups/%d/restore", backup.ID), map[string]string{"confirm": site.Domain})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("restore = %d %s", resp.StatusCode, body)
+	}
+	waitForTasks(t, s)
+	if !agent.called(rpc.MethodRunBackup) || !agent.called(rpc.MethodRestoreSnapshot) {
+		t.Fatalf("restore did not create safety snapshot and restore: %v", agent.calls)
+	}
+	backups, _ := s.Store.ListBackups(site.ID, 10)
+	foundSafety := false
+	for _, b := range backups {
+		if b.SnapshotID == "fedcba0987654321" && b.Kind == "pre-restore" {
+			foundSafety = true
+		}
+	}
+	if !foundSafety {
+		t.Fatal("pre-restore safety snapshot was not recorded")
+	}
+}
+
+func TestDatabaseImportRequiresDomainConfirmation(t *testing.T) {
+	s, _, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+	resp, _ := c.do("POST", "/api/sites", map[string]any{
+		"domain": "dbimport.example.com", "type": "wordpress", "title": "Import test",
+		"admin_email": "owner@dbimport.example.com", "admin_user": "owner", "admin_password": "wordpress-admin-pass",
+	})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatal("site create failed")
+	}
+	waitForTasks(t, s)
+	site, _ := s.Store.GetSiteByDomain("dbimport.example.com")
+	resp, _ = c.do("POST", fmt.Sprintf("/api/sites/%d/database/import", site.ID), map[string]string{
+		"path": "shared/import.sql", "confirm": "wrong.example.com",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("wrong import confirmation = %d", resp.StatusCode)
+	}
+}
+
+func TestShellQuotePreservesSingleQuotes(t *testing.T) {
+	if got, want := shellQuote("echo 'safe'"), `'echo '"'"'safe'"'"''`; got != want {
+		t.Fatalf("shellQuote = %q, want %q", got, want)
 	}
 }
 

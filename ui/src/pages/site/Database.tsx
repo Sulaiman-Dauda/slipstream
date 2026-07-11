@@ -31,6 +31,14 @@ export default function Database({ site }: { site: Site }) {
     }, "Database console opened (expires in 30 minutes)").then((ok) => { if (!ok && tab) tab.close(); });
   };
 
+  const importDatabase = () => {
+    const path = prompt("Path to an uploaded .sql file under Files", "shared/import.sql")?.trim();
+    if (!path) return;
+    const confirm = prompt(`This replaces the database and creates a rollback dump first. Type ${site.domain} to continue:`);
+    if (confirm !== site.domain) return;
+    run(() => api.post(`/api/sites/${site.id}/database/import`, { path, confirm }), "Database import started");
+  };
+
   if (!site.config.database.enabled) return <div className="info-box">This site has no managed database.</div>;
 
   const table = result || info?.tables;
@@ -50,6 +58,7 @@ export default function Database({ site }: { site: Site }) {
           <div className="row mt">
             <button onClick={launchAdminer} disabled={busy}><Icon.external /> Open database console</button>
             <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/database/export`), "Export started — find it under Files › shared/exports")}><Icon.download /> Export .sql</button>
+            <button className="ghost" onClick={importDatabase} disabled={busy}><Icon.upload /> Import .sql</button>
           </div>
           <p className="note tiny">The console (Adminer) opens on a private link that self-destructs after 30 minutes.</p>
         </div>

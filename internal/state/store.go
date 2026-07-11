@@ -3,6 +3,7 @@ package state
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -28,6 +29,18 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
+	}
+	// This database contains authentication secrets and infrastructure
+	// credentials. Secure existing files too instead of relying on umask.
+	if err := os.Chmod(path, 0o640); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("secure state db: %w", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Chmod(path+suffix, 0o640); err != nil && !os.IsNotExist(err) {
+			db.Close()
+			return nil, fmt.Errorf("secure state db sidecar: %w", err)
+		}
 	}
 	return s, nil
 }

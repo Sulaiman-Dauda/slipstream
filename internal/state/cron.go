@@ -58,6 +58,11 @@ func (s *Store) DeleteCronJob(id int64) error {
 	return nil
 }
 
+func (s *Store) UpdateCronRun(id int64, status string) error {
+	_, err := s.db.Exec(`UPDATE cron_jobs SET last_run=?, last_status=? WHERE id=?`, now(), status, id)
+	return err
+}
+
 func scanCron(row interface{ Scan(...any) error }) (CronJob, error) {
 	var j CronJob
 	var enabled int

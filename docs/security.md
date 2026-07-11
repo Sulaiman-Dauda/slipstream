@@ -15,14 +15,16 @@
 - **Domains** → `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.…)+$` before any use in
   config paths or rendering; enforced in both API and agent.
 - **DB identifiers** → `^[a-z][a-z0-9_]{2,31}$`; generated names only
-  (`site_<id>`); passwords reject quote/backslash characters and never
-  appear in argv (statement passed as a single argv element to `mariadb`).
+  (`site_<id>`); passwords reject quote/backslash characters and SQL is
+  passed on stdin, never exposed in process argv.
 - **System users** → `^slip-site-[0-9]+$`; generated only.
 - **Release IDs** → `^[0-9]{8}-[0-9]{6}$`.
 - **Restic passwords** → environment variable, never argv (argv is visible
   in /proc).
-- **All command execution** → argv arrays through one `Runner` interface;
-  `grep -rn "sh -c"` over the repo must stay empty.
+- **Command execution** → typed RPC parameters and argv arrays. Cron is the
+  sole intentional shell surface: commands are administrator-authored, run
+  as the site's unprivileged Unix user, time-bounded on manual execution,
+  and their scheduled output is capped.
 
 ## Secrets at rest
 
@@ -32,11 +34,12 @@ for these (they guard resources on the same host); at-rest encryption via a
 keyfile is planned before multi-server support, where secrets cross
 machines.
 
-## Known v1 limitations (tracked, not hidden)
+## Operational notes
 
 - Panel TLS is self-signed until the operator installs a real certificate.
-- No 2FA yet; strongly recommend firewalling 8443 to trusted IPs.
-- No rate limiting on `/api/login` beyond argon2 cost; same firewall advice.
+- TOTP 2FA is supported per account; login is rate-limited by IP and email.
+- The API and database bind to loopback. Only SSH, HTTP and HTTPS are opened
+  by the installer firewall policy.
 - Drift detection is hash-based on managed files; it does not watch files
   the panel has never rendered.
 

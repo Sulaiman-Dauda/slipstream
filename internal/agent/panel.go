@@ -17,6 +17,8 @@ import (
 // unavailable (nginx owns it), so it uses the webroot flow through a
 // dedicated panel challenge location served by nginx.
 func (a *Agent) PanelCertificate(p rpc.PanelCertParams) (map[string]string, error) {
+	a.certMu.Lock()
+	defer a.certMu.Unlock()
 	if err := nginx.ValidateDomain(p.Domain); err != nil {
 		return nil, err
 	}
@@ -25,22 +27,46 @@ func (a *Agent) PanelCertificate(p rpc.PanelCertParams) (map[string]string, erro
 	}
 	ctx := context.Background()
 
-	// A minimal nginx vhost that answers ACME challenges for the panel
-	// domain over port 80 and redirects everything else to the panel.
+	// Answer ACME challenges over port 80 and expose the panel on standard
+	// HTTPS. The API keeps its own TLS listener on the configured panel port;
+	// Nginx terminates the public connection and proxies to that listener.
 	vhost := fmt.Sprintf(`# Managed by Slipstream — panel domain %s
 server {
     listen 80;
     listen [::]:80;
     server_name %s;
     location /.well-known/acme-challenge/ { root %s; }
-    location / { return 301 https://$host:%d$request_uri; }
+	location / { return 301 https://$host$request_uri; }
 }
-`, p.Domain, p.Domain, a.Paths.ACMEWebroot, p.Port)
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name %s;
+    server_tokens off;
+    ssl_certificate /etc/slipstream/certs/panel.pem;
+    ssl_certificate_key /etc/slipstream/certs/panel.key;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    location / {
+        proxy_pass https://127.0.0.1:%d;
+        proxy_ssl_verify off;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+`, p.Domain, p.Domain, a.Paths.ACMEWebroot, p.Domain, p.Port)
 	vpath := filepath.Join(a.Paths.NginxSites, "slipstream-panel.conf")
 	if _, err := writeManaged(vpath, vhost, 0o644); err != nil {
 		return nil, err
 	}
 	if err := a.reloadNginx(); err != nil {
+		return nil, err
+	}
+	if err := a.preflightHTTP01(ctx, []string{p.Domain}); err != nil {
 		return nil, err
 	}
 

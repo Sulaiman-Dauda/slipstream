@@ -50,6 +50,7 @@ export const Icon = {
   close: () => svg(<path d="M18 6 6 18M6 6l12 12" />),
   copy: () => svg(<><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>),
   download: () => svg(<><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>),
+  upload: () => svg(<><path d="M12 21V9" /><path d="m7 14 5-5 5 5" /><path d="M5 3h14" /></>),
   lock: () => svg(<><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>),
   key: () => svg(<><circle cx="8" cy="15" r="4" /><path d="m10.6 12.4 8-8M15 7l2 2M18 4l2 2" /></>),
   globe: () => svg(<><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z" /></>),

@@ -45,6 +45,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	tasks = s.filterTasks(r, tasks)
 	respond(w, http.StatusOK, tasks)
 }
 
@@ -63,7 +64,25 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if user, _ := s.sessionUser(r); user.Role == "operator" && (task.SiteID == 0 || !s.canAccessSite(r, task.SiteID)) {
+		respondErr(w, http.StatusNotFound, "task not found")
+		return
+	}
 	respond(w, http.StatusOK, task)
+}
+
+func (s *Server) filterTasks(r *http.Request, tasks []state.Task) []state.Task {
+	user, _ := s.sessionUser(r)
+	if user.Role != "operator" {
+		return tasks
+	}
+	out := make([]state.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task.SiteID != 0 && s.canAccessSite(r, task.SiteID) {
+			out = append(out, task)
+		}
+	}
+	return out
 }
 
 // handleEvents is the SSE stream driving live progress in the UI. It sends
@@ -85,6 +104,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return false
 		}
+		tasks = s.filterTasks(r, tasks)
 		payload, _ := json.Marshal(tasks)
 		if _, err := fmt.Fprintf(w, "event: tasks\ndata: %s\n\n", payload); err != nil {
 			return false
@@ -97,6 +117,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	for {
 		select {
+		case <-s.Shutdown:
+			return
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:

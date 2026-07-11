@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/version"
 )
@@ -36,6 +38,9 @@ Usage:
   slipctl rollback <site-id>
   slipctl backup run <site-id>
   slipctl backup verify <backup-id>
+  slipctl backup restore <backup-id> <domain> [full|files|database]
+  slipctl database import <site-id> <domain> <site-relative.sql>
+  slipctl cron run <cron-id>
   slipctl cert issue <site-id>
   slipctl status
   slipctl drift
@@ -119,13 +124,20 @@ func main() {
 	}
 
 	jar, _ := cookiejar.New(nil)
+	base := strings.TrimSuffix(env("SLIPSTREAM_URL", "https://127.0.0.1:5252"), "/")
+	parsed, err := url.Parse(base)
+	if err != nil {
+		fatal(fmt.Errorf("SLIPSTREAM_URL: %w", err))
+	}
+	insecure := os.Getenv("SLIPSTREAM_INSECURE") == "1" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1"
 	c := &cli{
-		base: strings.TrimSuffix(env("SLIPSTREAM_URL", "https://127.0.0.1:8443"), "/"),
+		base: base,
 		client: &http.Client{
-			Jar: jar,
-			// The panel's own certificate may be the self-signed bootstrap
-			// cert; the loopback connection does not need public CA trust.
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+			Jar:     jar,
+			Timeout: 30 * time.Second,
+			// Bootstrap certificates are permitted only on loopback or when
+			// the operator explicitly opts in. Remote connections verify TLS.
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure}},
 		},
 	}
 
@@ -134,7 +146,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "set SLIPSTREAM_EMAIL and SLIPSTREAM_PASSWORD")
 		os.Exit(1)
 	}
-	c.must("POST", "/api/login", map[string]string{"email": email, "password": password})
+	c.must("POST", "/api/login", map[string]string{"email": email, "password": password, "totp": os.Getenv("SLIPSTREAM_TOTP")})
 
 	switch args[0] {
 	case "sites":
@@ -205,9 +217,28 @@ func main() {
 			pretty(c.must("POST", "/api/sites/"+args[2]+"/backups", map[string]any{}))
 		case "verify":
 			pretty(c.must("POST", "/api/backups/"+args[2]+"/verify", map[string]any{}))
+		case "restore":
+			if len(args) < 4 {
+				usage()
+			}
+			mode := "full"
+			if len(args) > 4 {
+				mode = args[4]
+			}
+			pretty(c.must("POST", "/api/backups/"+args[2]+"/restore", map[string]string{"confirm": args[3], "mode": mode}))
 		default:
 			usage()
 		}
+	case "database":
+		if len(args) != 5 || args[1] != "import" {
+			usage()
+		}
+		pretty(c.must("POST", "/api/sites/"+args[2]+"/database/import", map[string]string{"confirm": args[3], "path": args[4]}))
+	case "cron":
+		if len(args) != 3 || args[1] != "run" {
+			usage()
+		}
+		pretty(c.must("POST", "/api/cron/"+args[2]+"/run", map[string]any{}))
 	case "cert":
 		if len(args) < 3 || args[1] != "issue" {
 			usage()
