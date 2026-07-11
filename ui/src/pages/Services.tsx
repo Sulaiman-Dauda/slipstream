@@ -12,7 +12,7 @@ export default function Services() {
       <h1>Services</h1>
       <p className="sub">The system services powering your sites.</p>
       {toast.node}
-      <div className="grid cols-2">
+      <div className="card-list">
         {(services || []).map((s) => (
           <div className="card" key={s.name}>
             <div className="row between">

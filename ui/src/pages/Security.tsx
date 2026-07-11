@@ -14,7 +14,7 @@ export default function Security({ me, onChange }: { me: Me; onChange: () => voi
       <h1>Security</h1>
       <p className="sub">Protect your control panel — it has root over this server.</p>
       {toast.node}
-      <div className="grid cols-2">
+      <div className="card-list">
         <PasswordCard run={run} busy={busy} />
         <TwoFactorCard me={me} run={run} busy={busy} onChange={onChange} toast={toast} />
       </div>

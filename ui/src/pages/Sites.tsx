@@ -13,6 +13,33 @@ const typeIcon: Record<SiteType, string> = {
   wordpress: "◆", woocommerce: "🛒", static: "▤", php: "⌘", laravel: "▲", proxy: "⇄",
 };
 
+// orderSites lays production sites out with their staging environment
+// directly beneath, so the connector wire ties the two together visually.
+function orderSites(sites: Site[]): { site: Site; isStaging: boolean; hasStaging: boolean }[] {
+  const stagingByProd = new Map<number, Site[]>();
+  for (const s of sites) {
+    if (s.staging_of) {
+      const arr = stagingByProd.get(s.staging_of) || [];
+      arr.push(s);
+      stagingByProd.set(s.staging_of, arr);
+    }
+  }
+  const out: { site: Site; isStaging: boolean; hasStaging: boolean }[] = [];
+  for (const s of sites) {
+    if (s.staging_of) continue; // placed under its production site
+    const children = stagingByProd.get(s.id) || [];
+    out.push({ site: s, isStaging: false, hasStaging: children.length > 0 });
+    for (const c of children) out.push({ site: c, isStaging: true, hasStaging: false });
+  }
+  // Orphan staging sites (production removed) still get listed.
+  for (const s of sites) {
+    if (s.staging_of && !sites.some((p) => p.id === s.staging_of)) {
+      out.push({ site: s, isStaging: true, hasStaging: false });
+    }
+  }
+  return out;
+}
+
 export default function Sites() {
   const [sites] = usePoll<Site[]>("/api/sites", 8000);
   const [creating, setCreating] = useState(false);
@@ -37,24 +64,27 @@ export default function Sites() {
           <button onClick={() => setCreating(true)} style={{ marginTop: 14 }}><Icon.plus /> Create your first site</button>
         </div>
       ) : (
-        <div className="site-cards">
-          {sites.map((s) => (
-            <Link className="site-card" to={`/sites/${s.id}`} key={s.id}>
-              <div className="domain">
-                <span className="favicon">{typeIcon[s.type]}</span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.domain}</span>
-                {s.staging_of ? <span className="badge dim plain" style={{ marginLeft: "auto" }}>staging</span> : null}
+        <div className="site-list">
+          {orderSites(sites).map(({ site: s, isStaging, hasStaging }) => (
+            <Link
+              className={"site-row" + (isStaging ? " is-staging" : "") + (hasStaging ? " has-staging" : "")}
+              to={`/sites/${s.id}`} key={s.id}
+            >
+              <span className="favicon">{typeIcon[s.type]}</span>
+              <div className="rowmain">
+                <div className="domain">
+                  <span>{s.domain}</span>
+                  {isStaging && <span className="badge staging plain">staging</span>}
+                </div>
+                <div className="meta">
+                  <span>{typeLabels[s.type]}</span><span className="pip" />
+                  <span>{s.profile}</span>
+                  {s.php_version && <><span className="pip" /><span>PHP {s.php_version}</span></>}
+                  <span className="pip" /><span className="cachestate">{s.config.cache_enabled ? "Cache on" : "Cache off"}</span>
+                </div>
               </div>
-              <div className="meta">
-                <span>{typeLabels[s.type]}</span><span className="pip" />
-                <span>{s.profile}</span>
-                {s.php_version && <><span className="pip" /><span>PHP {s.php_version}</span></>}
-              </div>
-              <div className="footer">
+              <div className="rowend">
                 <StatusBadge status={s.status} />
-                <span className="dim3" style={{ fontSize: 12 }}>
-                  {s.config.cache_enabled ? "Cache on" : "Cache off"}
-                </span>
               </div>
             </Link>
           ))}
