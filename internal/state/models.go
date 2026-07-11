@@ -192,7 +192,8 @@ type User struct {
 	ID           int64     `json:"id"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
-	Role         string    `json:"role"` // admin | readonly
+	Role         string    `json:"role"` // admin | operator | readonly
+	SiteIDs      []int64   `json:"site_ids,omitempty"`
 	TOTPEnabled  bool      `json:"totp_enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -215,6 +216,16 @@ type CronJob struct {
 	LastRun     *time.Time `json:"last_run,omitempty"`
 	LastStatus  string     `json:"last_status"`
 	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// MetricSample is a deliberately small capacity snapshot. The store retains
+// only one day, avoiding a separate time-series service and unbounded data.
+type MetricSample struct {
+	CPUHeadroomPct  int       `json:"cpu_headroom_pct"`
+	MemHeadroomPct  int       `json:"mem_headroom_pct"`
+	DiskHeadroomPct int       `json:"disk_headroom_pct"`
+	Load1           float64   `json:"load1"`
+	SampledAt       time.Time `json:"sampled_at"`
 }
 
 // AuditEvent is one immutable audit-log entry.

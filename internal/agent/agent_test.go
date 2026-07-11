@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -166,6 +169,7 @@ func TestCreateSiteRejectsBadInput(t *testing.T) {
 		{Domain: "evil.com; }", SystemUser: "slip-site-1"},
 		{Domain: "ok.example.com", SystemUser: "root"},
 		{Domain: "ok.example.com", SystemUser: "slip-site-1", PHPVersion: "7.4; rm -rf /"},
+		{Domain: "ok.example.com", SystemUser: "slip-site-1", RootPath: "/etc"},
 	}
 	for _, s := range bad {
 		if _, err := a.CreateSite(rpc.CreateSiteParams{Site: s}); err == nil {
@@ -174,6 +178,20 @@ func TestCreateSiteRejectsBadInput(t *testing.T) {
 	}
 	if len(run.calls) != 0 {
 		t.Errorf("no commands may run for rejected input, got %v", run.calls)
+	}
+}
+
+func TestDeleteSiteIsIdempotent(t *testing.T) {
+	a, _ := testAgent(t)
+	site := staticSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: site}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DeleteSite(rpc.SiteRef{Site: site}); err != nil {
+		t.Fatalf("first delete: %v", err)
+	}
+	if _, err := a.DeleteSite(rpc.SiteRef{Site: site}); err != nil {
+		t.Fatalf("idempotent delete: %v", err)
 	}
 }
 
@@ -218,6 +236,75 @@ func TestDeployPromoteRollback(t *testing.T) {
 		t.Fatalf("rollback landed on %s, want initial", link)
 	}
 	_ = run
+}
+
+func TestCreateStagingClonesAndRollsBackOnFailure(t *testing.T) {
+	a, run := testAgent(t)
+	prod := staticSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: prod}); err != nil {
+		t.Fatal(err)
+	}
+	stg := prod
+	stg.ID = 4
+	stg.Domain = "staging.docs.example.com"
+	stg.SystemUser = "slip-site-4"
+	stg.RootPath = filepath.Join(a.Paths.SitesRoot, stg.Domain)
+	stg.StagingOf = prod.ID
+	if _, err := a.CreateStaging(rpc.StagingParams{Production: prod, Staging: stg}); err != nil {
+		t.Fatalf("create staging: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stg.RootPath, "releases", "initial", "index.html")); err != nil {
+		t.Fatalf("staging content missing: %v", err)
+	}
+	if !run.called("chown", "root:slip-site-4", stg.RootPath) {
+		t.Fatal("staging chroot ownership was not restored")
+	}
+
+	broken := stg
+	broken.ID = 5
+	broken.Domain = "broken.docs.example.com"
+	broken.SystemUser = "slip-site-5"
+	broken.RootPath = filepath.Join(a.Paths.SitesRoot, broken.Domain)
+	run.fail["cp"] = errors.New("copy failed")
+	if _, err := a.CreateStaging(rpc.StagingParams{Production: prod, Staging: broken}); err == nil {
+		t.Fatal("expected staging clone failure")
+	}
+	if _, err := os.Stat(broken.RootPath); !os.IsNotExist(err) {
+		t.Fatalf("failed staging root was not rolled back: %v", err)
+	}
+}
+
+func TestProtectedStagingTables(t *testing.T) {
+	wp := state.Site{Type: state.SiteWordPress}
+	commerce := state.Site{Type: state.SiteWooCommerce}
+	for _, table := range []string{"wp_users", "custom_usermeta"} {
+		if !protectedLiveTable(wp, table) {
+			t.Fatalf("WordPress identity table %s was not protected", table)
+		}
+	}
+	for _, table := range []string{"wp_posts", "wp_postmeta", "wp_wc_orders", "wp_actionscheduler_actions", "wp_woocommerce_sessions"} {
+		if !protectedLiveTable(commerce, table) {
+			t.Fatalf("WooCommerce live table %s was not protected", table)
+		}
+	}
+	if protectedLiveTable(commerce, "wp_terms") || protectedLiveTable(wp, "wp_options") {
+		t.Fatal("safe selectable tables were incorrectly protected")
+	}
+	a, run := testAgent(t)
+	prod := staticSite(a)
+	prod.Type = state.SiteWooCommerce
+	prod.PHPVersion = "8.4"
+	prod.Config.Database = state.DatabaseConfig{Enabled: true, Name: "site_3", User: "site_3"}
+	stg := prod
+	stg.ID, stg.Domain, stg.SystemUser, stg.StagingOf = 4, "staging.docs.example.com", "slip-site-4", prod.ID
+	stg.RootPath = filepath.Join(a.Paths.SitesRoot, stg.Domain)
+	stg.Config.Database = state.DatabaseConfig{Enabled: true, Name: "site_4", User: "site_4"}
+	if _, err := a.SyncStagingDatabase(rpc.SyncStagingDBParams{Production: prod, Staging: stg, Tables: []string{"wp_posts"}}); err == nil {
+		t.Fatal("agent accepted protected WooCommerce table")
+	}
+	if run.called("mariadb") {
+		t.Fatal("database command ran before protected-table rejection")
+	}
 }
 
 func TestPurgeCacheAndDrift(t *testing.T) {
@@ -287,6 +374,70 @@ func TestDatabaseIdentifierValidation(t *testing.T) {
 		if strings.Contains(strings.Join(c, " "), "ssssssssssssssssssssssss") {
 			t.Error("password leaked into argv")
 		}
+	}
+}
+
+func TestRestoreRejectsUnknownModeBeforeRepositoryAccess(t *testing.T) {
+	a, _ := testAgent(t)
+	_, err := a.RestoreSnapshot(rpc.RestoreParams{
+		Site:       staticSite(a),
+		SnapshotID: "abcdef1234567890",
+		Mode:       "everything",
+	})
+	if err == nil || !strings.Contains(err.Error(), "restore mode") {
+		t.Fatalf("unknown restore mode error = %v", err)
+	}
+}
+
+func TestDatabaseImportRejectsNonSQLPath(t *testing.T) {
+	a, _ := testAgent(t)
+	site := staticSite(a)
+	site.Config.Database = state.DatabaseConfig{Enabled: true, Name: "site_db", User: "site_user"}
+	_, err := a.DBImport(rpc.DBImportParams{Site: site, Database: "site_db", RelPath: "shared/import.txt"})
+	if err == nil || !strings.Contains(err.Error(), ".sql") {
+		t.Fatalf("non-SQL import error = %v", err)
+	}
+}
+
+func TestRunCronRejectsInvalidIdentityAndMultilineCommand(t *testing.T) {
+	a, _ := testAgent(t)
+	if _, err := a.RunCron(rpc.RunCronParams{SystemUser: "root;id", Command: "true"}); err == nil {
+		t.Fatal("accepted invalid cron identity")
+	}
+	if _, err := a.RunCron(rpc.RunCronParams{SystemUser: "site-user", Command: "true\nfalse"}); err == nil {
+		t.Fatal("accepted multiline cron command")
+	}
+}
+
+func TestMigrationArchiveRejectsTraversalAndLinks(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header tar.Header
+	}{
+		{"traversal", tar.Header{Name: "../../etc/shadow", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg}},
+		{"symlink", tar.Header{Name: "wp-config.php", Linkname: "/etc/shadow", Typeflag: tar.TypeSymlink}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			archive := filepath.Join(t.TempDir(), "site.tar.gz")
+			f, err := os.Create(archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gz := gzip.NewWriter(f)
+			tw := tar.NewWriter(gz)
+			if err := tw.WriteHeader(&tc.header); err != nil {
+				t.Fatal(err)
+			}
+			if tc.header.Size > 0 {
+				_, _ = tw.Write([]byte("x"))
+			}
+			_ = tw.Close()
+			_ = gz.Close()
+			_ = f.Close()
+			if _, _, err := extractMigrationArchive(archive, t.TempDir()); err == nil {
+				t.Fatal("unsafe archive was accepted")
+			}
+		})
 	}
 }
 

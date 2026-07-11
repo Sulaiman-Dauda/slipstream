@@ -129,6 +129,23 @@ func (s *Store) ListSites() ([]Site, error) {
 	return sites, rows.Err()
 }
 
+func (s *Store) ListSitesForUser(userID int64) ([]Site, error) {
+	rows, err := s.db.Query(`SELECT `+siteCols+` FROM sites WHERE EXISTS (SELECT 1 FROM user_sites us WHERE us.site_id=sites.id AND us.user_id=?) ORDER BY domain`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sites []Site
+	for rows.Next() {
+		site, err := scanSite(rows)
+		if err != nil {
+			return nil, err
+		}
+		sites = append(sites, site)
+	}
+	return sites, rows.Err()
+}
+
 // StagingSiteFor returns the staging site of a production site, if any.
 func (s *Store) StagingSiteFor(productionID int64) (Site, error) {
 	return scanSite(s.db.QueryRow(`SELECT `+siteCols+` FROM sites WHERE staging_of=?`, productionID))

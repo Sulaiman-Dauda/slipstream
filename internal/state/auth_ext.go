@@ -62,7 +62,6 @@ func (s *Store) ListUsers() ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []User
 	for rows.Next() {
 		var u User
@@ -75,7 +74,65 @@ func (s *Store) ListUsers() ([]User, error) {
 		u.TOTPEnabled = totp == 1
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	// The store deliberately uses one SQLite connection. Close the outer
+	// result set before loading assignments, otherwise UserSiteIDs waits for
+	// the same connection forever when at least one operator exists.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].SiteIDs, _ = s.UserSiteIDs(out[i].ID)
+	}
+	return out, nil
+}
+
+func (s *Store) SetUserSites(userID int64, siteIDs []int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM user_sites WHERE user_id=?`, userID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	for _, siteID := range siteIDs {
+		if siteID <= 0 {
+			tx.Rollback()
+			return errors.New("invalid site assignment")
+		}
+		if _, err := tx.Exec(`INSERT INTO user_sites (user_id, site_id) VALUES (?, ?)`, userID, siteID); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UserSiteIDs(userID int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT site_id FROM user_sites WHERE user_id=? ORDER BY site_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Store) UserCanAccessSite(userID, siteID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM user_sites WHERE user_id=? AND site_id=?`, userID, siteID).Scan(&n)
+	return n > 0, err
 }
 
 // DeleteUser removes a user (and cascades their sessions).

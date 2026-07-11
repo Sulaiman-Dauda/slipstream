@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { DriftEvent, Site, SystemStatus } from "../types";
+import { DriftEvent, MetricSample, Site, SystemStatus } from "../types";
 import { useAction, usePoll, useToast } from "../components/ui";
 import { Icon } from "../icons";
 import TaskFeed from "../components/TaskFeed";
@@ -20,12 +20,34 @@ function Meter({ label, icon, pct }: { label: string; icon: keyof typeof Icon; p
   );
 }
 
+function CapacityHistory({ samples }: { samples: MetricSample[] }) {
+  const points = (key: "cpu_headroom_pct" | "mem_headroom_pct" | "disk_headroom_pct") =>
+    samples.map((s, i) => `${samples.length === 1 ? 0 : (i / (samples.length - 1)) * 100},${100 - s[key]}`).join(" ");
+  return (
+    <div className="card capacity-history">
+      <div className="row between">
+        <div><h3>24-hour capacity</h3><p className="sub">Used capacity, sampled every five minutes.</p></div>
+        <div className="row metric-legend"><span className="cpu">CPU</span><span className="memory">Memory</span><span className="disk">Disk</span></div>
+      </div>
+      {samples.length < 2 ? <div className="dim chart-empty">History starts collecting automatically.</div> : (
+        <svg className="capacity-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="CPU, memory, and disk usage history">
+          <line x1="0" y1="50" x2="100" y2="50" className="chart-grid" />
+          <polyline points={points("cpu_headroom_pct")} className="chart-line cpu" />
+          <polyline points={points("mem_headroom_pct")} className="chart-line memory" />
+          <polyline points={points("disk_headroom_pct")} className="chart-line disk" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [drift, setDrift] = useState<DriftEvent[]>([]);
   const [agentError, setAgentError] = useState("");
   const { data: services } = usePoll<ServiceInfo[]>("/api/services", 15000);
   const { data: sites } = usePoll<Site[]>("/api/sites", 15000);
+  const { data: metrics } = usePoll<MetricSample[]>("/api/system/metrics", 60000);
   const toast = useToast();
   const { run, busy } = useAction(toast);
 
@@ -78,6 +100,8 @@ export default function Dashboard() {
           {Array.from({ length: 4 }).map((_, i) => <div key={i} className="card skeleton skeleton-card" />)}
         </div>
       )}
+
+      <CapacityHistory samples={metrics || []} />
 
       <div className="row between" style={{ marginTop: 28, marginBottom: 12 }}>
         <h2 style={{ margin: 0 }}>Services</h2>

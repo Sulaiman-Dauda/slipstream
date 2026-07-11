@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, fmtAgo, fmtBytes, fmtDuration } from "../api";
 import { Backup, Deployment, GuardReport, Site } from "../types";
-import { CopyButton, Skeleton, StatusBadge, useAction, useToast, usePoll } from "../components/ui";
+import { CopyButton, Modal, Skeleton, StatusBadge, useAction, useToast, usePoll } from "../components/ui";
 import GuardReportView from "../components/GuardReport";
 import TaskFeed from "../components/TaskFeed";
 import { Icon } from "../icons";
@@ -10,8 +10,9 @@ import Database from "./site/Database";
 import Files from "./site/Files";
 import WordPress from "./site/WordPress";
 import Cron from "./site/Cron";
+import Migration from "./site/Migration";
 
-type Tab = "overview" | "cache" | "wordpress" | "deployments" | "backups" | "database" | "files" | "cron" | "php" | "sftp" | "logs";
+type Tab = "overview" | "cache" | "wordpress" | "deployments" | "backups" | "database" | "files" | "cron" | "php" | "sftp" | "migration" | "logs";
 
 export default function SiteDetail() {
   const { id } = useParams();
@@ -46,7 +47,7 @@ export default function SiteDetail() {
     ...(isWP ? [["wordpress", "WordPress"] as [Tab, string]] : []),
     ["deployments", "Deployments"], ["backups", "Backups"],
     ...(site.config.database.enabled ? [["database", "Database"] as [Tab, string]] : []),
-    ["files", "Files"], ["cron", "Cron"],
+    ["files", "Files"], ["cron", "Cron"], ["migration", "Migration"],
     ...(hasPHP ? [["php", "PHP"] as [Tab, string]] : []),
     ["sftp", "SFTP"], ["logs", "Logs"],
   ];
@@ -81,6 +82,7 @@ export default function SiteDetail() {
       {tab === "database" && <Database site={site} />}
       {tab === "files" && <Files site={site} />}
       {tab === "cron" && <Cron site={site} />}
+      {tab === "migration" && <Migration site={site} />}
       {tab === "php" && <PHPTab site={site} onChange={load} />}
       {tab === "sftp" && <SFTPTab site={site} onChange={load} />}
       {tab === "logs" && <LogsTab site={site} />}
@@ -157,6 +159,7 @@ function CacheTab({ site, onChange }: { site: Site; onChange: () => void }) {
 function Deployments({ site, run }: { site: Site; run: RunFn }) {
   const { data: deps } = usePoll<Deployment[]>(`/api/sites/${site.id}/deployments`, 8000);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [databasePush, setDatabasePush] = useState(false);
   const badge: Record<string, string> = { created: "dim", guarding: "accent", blocked: "bad", promoted: "good", rolled_back: "warn" };
   const guardBadge: Record<string, string> = { pass: "good", warn: "warn", block: "bad" };
 
@@ -164,6 +167,7 @@ function Deployments({ site, run }: { site: Site; run: RunFn }) {
     <>
       <div className="row mb">
         {!site.staging_of && <button onClick={() => run(() => api.post(`/api/sites/${site.id}/safe-push`), "Safe Push started — Performance Guard is comparing staging vs production")}>Safe Push from staging</button>}
+        {!site.staging_of && <button className="ghost" onClick={() => setDatabasePush(true)}><Icon.database /> Select database tables</button>}
         <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/rollback`), "Rolling back to previous release")}><Icon.history /> Instant rollback</button>
       </div>
       {!deps ? <Skeleton /> : deps.length === 0 ? <div className="info-box">No releases yet. Safe Push from staging, or deploy with slipctl.</div> : (
@@ -194,8 +198,37 @@ function Deployments({ site, run }: { site: Site; run: RunFn }) {
           </table>
         </div>
       )}
+      {databasePush && <DatabasePushModal site={site} run={run} onClose={() => setDatabasePush(false)} />}
     </>
   );
+}
+
+function DatabasePushModal({ site, run, onClose }: { site: Site; run: RunFn; onClose: () => void }) {
+  const [tables, setTables] = useState<{ name: string; protected: boolean }[] | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api.get<{ tables: { name: string; protected: boolean }[] }>(`/api/sites/${site.id}/staging/tables`)
+      .then((r) => setTables(r.tables || []))
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not load staging tables"));
+  }, [site.id]);
+  const promote = () => {
+    const confirmation = prompt(`This replaces the selected production tables with staging data.\nA safety snapshot is created first. Type ${site.domain} to continue:`);
+    if (confirmation !== site.domain) return;
+    run(() => api.post(`/api/sites/${site.id}/staging/database`, { tables: selected, confirm: confirmation }), "Database promotion started").then((ok) => ok && onClose());
+  };
+  return <Modal title="Promote database tables" onClose={onClose} wide>
+    <div className="info-box">Choose only the tables intentionally changed on staging. Identity, WooCommerce order and session tables are protected and cannot be selected.</div>
+    {error && <div className="error-box">{error}</div>}
+    {!tables ? <div className="empty"><span className="spinner" /></div> : <div className="check-list mt" style={{ maxHeight: 360 }}>
+      {tables.map((table) => <label className="check-row" key={table.name}>
+        <input type="checkbox" disabled={table.protected} checked={selected.includes(table.name)} onChange={(e) => setSelected((current) => e.target.checked ? [...current, table.name] : current.filter((name) => name !== table.name))} />
+        <span className="mono" style={{ flex: 1 }}>{table.name}</span>
+        {table.protected && <span className="badge warn plain">protected live data</span>}
+      </label>)}
+    </div>}
+    <div className="row end mt-lg"><button className="ghost" onClick={onClose}>Cancel</button><button disabled={selected.length === 0} onClick={promote}>Promote selected tables</button></div>
+  </Modal>;
 }
 
 function Backups({ site, run }: { site: Site; run: RunFn }) {
@@ -230,7 +263,15 @@ function Backups({ site, run }: { site: Site; run: RunFn }) {
                   <td>{fmtBytes(b.size_bytes)}</td>
                   <td><span className={`badge ${badge[b.verify_status]}`}>{b.verify_status}</span>{b.verified_at && <span className="dim3" style={{ marginLeft: 8, fontSize: 12 }}>{fmtAgo(b.verified_at)}</span>}</td>
                   <td className="dim">{fmtAgo(b.created_at)}</td>
-                  <td><button className="ghost tiny" onClick={() => run(() => api.post(`/api/backups/${b.id}/verify`), "Restore test started")}>Test restore</button></td>
+                  <td><div className="row">
+                    <button className="ghost tiny" onClick={() => run(() => api.post(`/api/backups/${b.id}/verify`), "Restore test started")}>Test restore</button>
+                    <button className="danger tiny" onClick={() => {
+                      const mode = prompt("Restore mode: full, files, or database", "full")?.trim().toLowerCase();
+                      if (!mode || !["full", "files", "database"].includes(mode)) return;
+                      const confirmation = prompt(`Restore ${site.domain} to this snapshot?\n\nA fresh safety snapshot will be created first. Type the domain to continue:`);
+                      if (confirmation === site.domain) run(() => api.post(`/api/backups/${b.id}/restore`, { confirm: confirmation, mode }), `${mode} restore started`);
+                    }}>Restore</button>
+                  </div></td>
                 </tr>
               ))}
             </tbody>
@@ -283,6 +324,12 @@ function SFTPTab({ site, onChange }: { site: Site; onChange: () => void }) {
   const { run, busy } = useAction(toast);
   const [password, setPassword] = useState("");
   const [info, setInfo] = useState<{ host: string; username: string; port: number } | null>(null);
+  const [publicKey, setPublicKey] = useState("");
+  const [keys, setKeys] = useState<{ type: string; fingerprint: string; label?: string }[]>([]);
+  const loadKeys = useCallback(() => {
+    api.get<{ keys: typeof keys }>(`/api/sites/${site.id}/ssh-keys`).then((r) => setKeys(r.keys || [])).catch(() => undefined);
+  }, [site.id]);
+  useEffect(() => { loadKeys(); }, [loadKeys]);
   return (
     <div className="card">
       <div className="card-head"><span className="card-ico"><Icon.key /></span><h3 style={{ margin: 0 }}>SFTP access</h3></div>
@@ -304,6 +351,22 @@ function SFTPTab({ site, onChange }: { site: Site; onChange: () => void }) {
             <dt>Port</dt><dd className="mono">{info?.port || 22}</dd>
             <dt>Username</dt><dd className="mono">{info?.username || site.system_user || `slip-site-${site.id}`}<CopyButton value={info?.username || site.system_user || `slip-site-${site.id}`} /></dd>
           </div>
+        </div>
+      )}
+      <h2>SSH keys</h2>
+      <p className="note">Recommended for developers. Keys grant SFTP access only; the account still has no shell.</p>
+      <label>Public key</label>
+      <textarea value={publicKey} onChange={(e) => setPublicKey(e.target.value)} rows={3} placeholder="ssh-ed25519 AAAA… developer@laptop" />
+      <button className="mt" disabled={busy || !publicKey.trim()} onClick={() => run(() => api.post(`/api/sites/${site.id}/ssh-keys`, { public_key: publicKey }), "SSH key added").then((ok) => { if (ok) { setPublicKey(""); loadKeys(); } })}><Icon.plus /> Add key</button>
+      {keys.length > 0 && (
+        <div className="table-wrap mt">
+          <table><thead><tr><th>Key</th><th>Fingerprint</th><th /></tr></thead><tbody>
+            {keys.map((key) => <tr key={key.fingerprint}>
+              <td>{key.label || key.type}</td>
+              <td className="mono dim">{key.fingerprint}</td>
+              <td><button className="danger tiny" onClick={() => { if (confirm(`Remove ${key.label || key.fingerprint}?`)) run(() => api.del(`/api/sites/${site.id}/ssh-keys/${encodeURIComponent(key.fingerprint)}`), "SSH key removed").then(loadKeys); }}>Remove</button></td>
+            </tr>)}
+          </tbody></table>
         </div>
       )}
       {toast.node}

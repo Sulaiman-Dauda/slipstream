@@ -33,6 +33,11 @@ export default function Cron({ site }: { site: Site }) {
     if (!confirm("Remove this scheduled task?")) return;
     run(() => api.del(`/api/cron/${id}`), "Removed").then((ok) => ok && load());
   };
+  const runNow = (id: number) => run(async () => {
+    const result = await api.post<{ status: string; output: string }>(`/api/cron/${id}/run`);
+    alert(`${result.status}\n\n${result.output || "No output"}`);
+    load();
+  }, "Cron job finished");
 
   const wpExample = site.type === "wordpress" || site.type === "woocommerce";
 
@@ -70,8 +75,8 @@ export default function Cron({ site }: { site: Site }) {
                 <tr key={j.id}>
                   <td className="mono">{j.schedule}</td>
                   <td><div className="mono" style={{ maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.command}</div>{j.description && <div className="dim3" style={{ fontSize: 12 }}>{j.description}</div>}</td>
-                  <td className="dim">{j.last_run ? fmtAgo(j.last_run) : "—"}</td>
-                  <td><button className="danger tiny" onClick={() => del(j.id)}>Remove</button></td>
+                  <td><span className={`badge ${j.last_status === "succeeded" ? "good" : j.last_status ? "bad" : "plain"}`}>{j.last_status || "never"}</span>{j.last_run && <div className="dim3">{fmtAgo(j.last_run)}</div>}</td>
+                  <td><div className="row"><button className="ghost tiny" disabled={busy} onClick={() => runNow(j.id)}>Run now</button><button className="danger tiny" onClick={() => del(j.id)}>Remove</button></div></td>
                 </tr>
               ))}
             </tbody>

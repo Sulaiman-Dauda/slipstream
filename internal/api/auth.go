@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/mail"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -30,9 +31,12 @@ func hashPassword(password string) (string, error) {
 		return "", err
 	}
 	key := argon2.IDKey([]byte(password), salt, 3, 64*1024, 2, 32)
-	return fmt.Sprintf("argon2id$%s$%s",
+	encoded := fmt.Sprintf("argon2id$%s$%s",
 		base64.RawStdEncoding.EncodeToString(salt),
-		base64.RawStdEncoding.EncodeToString(key)), nil
+		base64.RawStdEncoding.EncodeToString(key))
+	key = nil
+	debug.FreeOSMemory()
+	return encoded, nil
 }
 
 func verifyPassword(password, encoded string) bool {
@@ -49,7 +53,10 @@ func verifyPassword(password, encoded string) bool {
 		return false
 	}
 	got := argon2.IDKey([]byte(password), salt, 3, 64*1024, 2, 32)
-	return subtle.ConstantTimeCompare(got, want) == 1
+	ok := subtle.ConstantTimeCompare(got, want) == 1
+	got = nil
+	debug.FreeOSMemory()
+	return ok
 }
 
 type credentials struct {
@@ -222,6 +229,48 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (s *Server) requireSiteManager(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := s.sessionUser(r)
+		if err != nil {
+			respondErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if user.Role != "admin" && user.Role != "operator" {
+			respondErr(w, http.StatusForbidden, "site management access required")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) requireGlobalViewer(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := s.sessionUser(r)
+		if err != nil {
+			respondErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if user.Role == "operator" {
+			respondErr(w, http.StatusForbidden, "server-wide access required")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) canAccessSite(r *http.Request, siteID int64) bool {
+	user, err := s.sessionUser(r)
+	if err != nil {
+		return false
+	}
+	if user.Role != "operator" {
+		return true
+	}
+	ok, err := s.Store.UserCanAccessSite(user.ID, siteID)
+	return err == nil && ok
 }
 
 // actor returns the audit identity for a request.

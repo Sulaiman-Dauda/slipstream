@@ -29,6 +29,15 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, res)
 }
 
+func (s *Server) handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics, err := s.Store.ListMetrics(288)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, metrics)
+}
+
 // handleListDrift runs a live drift check against every managed file,
 // records new drift events, and returns the open set.
 func (s *Server) handleListDrift(w http.ResponseWriter, r *http.Request) {

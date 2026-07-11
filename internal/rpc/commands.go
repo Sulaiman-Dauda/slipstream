@@ -86,9 +86,16 @@ type ReleaseParams struct {
 
 // StagingParams clones production into an isolated staging site.
 type StagingParams struct {
+	Production     state.Site `json:"production"`
+	Staging        state.Site `json:"staging"`
+	DBPassword     string     `json:"db_password"`
+	ConnectorToken string     `json:"connector_token"`
+}
+
+type SyncStagingDBParams struct {
 	Production state.Site `json:"production"`
 	Staging    state.Site `json:"staging"`
-	DBPassword string     `json:"db_password"`
+	Tables     []string   `json:"tables"`
 }
 
 // BackupParams runs a Restic backup of a site.
@@ -113,6 +120,7 @@ type RestoreParams struct {
 	Password   string     `json:"password"`
 	SnapshotID string     `json:"snapshot_id"`
 	TargetDir  string     `json:"target_dir,omitempty"` // empty = in place
+	Mode       string     `json:"mode,omitempty"`       // full | files | database
 }
 
 // VerifyResult is the outcome of a verified restore test.

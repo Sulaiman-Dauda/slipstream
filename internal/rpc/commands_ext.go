@@ -47,6 +47,16 @@ type CrontabParams struct {
 	Content    string `json:"content"`
 }
 
+type RunCronParams struct {
+	SystemUser string `json:"system_user"`
+	Command    string `json:"command"`
+}
+
+type RunCronResult struct {
+	Status string `json:"status"`
+	Output string `json:"output"`
+}
+
 // --- Firewall ---
 
 // FirewallRuleParams opens or closes a port via UFW.
@@ -89,6 +99,33 @@ type DBExportParams struct {
 type DBExportResult struct {
 	Path      string `json:"path"`
 	SizeBytes int64  `json:"size_bytes"`
+}
+
+// DBImportParams imports a SQL file already uploaded inside the site's
+// jailed root. Large dumps therefore stream locally instead of crossing RPC.
+type DBImportParams struct {
+	Site     state.Site `json:"site"`
+	Database string     `json:"database"`
+	RelPath  string     `json:"rel_path"`
+}
+
+type DBImportResult struct {
+	Imported  string `json:"imported"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
+type MigrationParams struct {
+	Site      state.Site `json:"site"`
+	Archive   string     `json:"archive"`
+	SQL       string     `json:"sql,omitempty"`
+	OldDomain string     `json:"old_domain,omitempty"`
+	ReleaseID string     `json:"release_id"`
+}
+
+type MigrationResult struct {
+	ReleaseID string `json:"release_id"`
+	Files     int    `json:"files"`
+	Bytes     int64  `json:"bytes"`
 }
 
 // AdminerParams drops a time-limited Adminer instance into a site.
@@ -149,11 +186,50 @@ type WriteFileParams struct {
 	Content string     `json:"content"`
 }
 
+// TransferFileParams uploads or downloads bounded binary data.
+type TransferFileParams struct {
+	Site    state.Site `json:"site"`
+	RelPath string     `json:"rel_path"`
+	Data    []byte     `json:"data,omitempty"`
+	Upload  bool       `json:"upload"`
+}
+
+type TransferFileResult struct {
+	Name string `json:"name"`
+	Data []byte `json:"data,omitempty"`
+	Size int64  `json:"size"`
+}
+
+// ManageFileParams performs a structural operation inside the site jail.
+type ManageFileParams struct {
+	Site      state.Site `json:"site"`
+	Operation string     `json:"operation"` // mkdir | rename | delete
+	RelPath   string     `json:"rel_path"`
+	DestPath  string     `json:"dest_path,omitempty"`
+}
+
 // SFTPParams sets a site user's SFTP password and enables SFTP access.
 type SFTPParams struct {
-	SystemUser string `json:"system_user"`
-	Password   string `json:"password"`
-	Enable     bool   `json:"enable"`
+	Site     state.Site `json:"site"`
+	Password string     `json:"password"`
+	Enable   bool       `json:"enable"`
+}
+
+type SSHKeyParams struct {
+	Site        state.Site `json:"site"`
+	Action      string     `json:"action"` // list | add | delete
+	PublicKey   string     `json:"public_key,omitempty"`
+	Fingerprint string     `json:"fingerprint,omitempty"`
+}
+
+type SSHKey struct {
+	Type        string `json:"type"`
+	Fingerprint string `json:"fingerprint"`
+	Label       string `json:"label,omitempty"`
+}
+
+type SSHKeysResult struct {
+	Keys []SSHKey `json:"keys"`
 }
 
 // --- WordPress toolkit ---

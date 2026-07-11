@@ -33,7 +33,7 @@ MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 DISK_MB=$(df -m / | awk 'NR==2 {print $4}')
 [[ $DISK_MB -ge 10000 ]] || fail "at least 10 GB free disk required"
 
-for port in 80 443 5252; do
+for port in 80 443; do
   if ss -ltn "sport = :$port" | grep -q LISTEN; then
     fail "port $port is already in use — Slipstream must own the web ports"
   fi
@@ -82,8 +82,14 @@ install -d -m 0700 /var/lib/slipstream/work
 # the agent token and panel TLS certificate.
 install -d -m 0750 -g slipstream /etc/slipstream /etc/slipstream/certs
 
-echo "SLIPSTREAM_PHP_VERSION=${PHP_VERSION}" > /etc/slipstream/panel.env
-chmod 0644 /etc/slipstream/panel.env
+touch /etc/slipstream/panel.env
+if grep -q '^SLIPSTREAM_PHP_VERSION=' /etc/slipstream/panel.env; then
+  sed -i "s/^SLIPSTREAM_PHP_VERSION=.*/SLIPSTREAM_PHP_VERSION=${PHP_VERSION}/" /etc/slipstream/panel.env
+else
+  echo "SLIPSTREAM_PHP_VERSION=${PHP_VERSION}" >> /etc/slipstream/panel.env
+fi
+chown root:slipstream /etc/slipstream/panel.env
+chmod 0640 /etc/slipstream/panel.env
 
 if [[ ! -f /etc/slipstream/agent.token ]]; then
   head -c 48 /dev/urandom | base64 | tr -d '/+=' | head -c 48 > /etc/slipstream/agent.token
@@ -125,6 +131,38 @@ fi
 # ---------- base nginx configuration ----------
 log "Configuring nginx base…"
 rm -f /etc/nginx/sites-enabled/default
+# Nginx is the panel's only public ingress. This catch-all bootstrap vhost
+# makes first-run setup available on standard HTTPS while panel-api remains
+# loopback-only. A domain-specific vhost is added after certificate issuance.
+cat > /etc/nginx/sites-enabled/slipstream-panel-bootstrap.conf <<'NGINX'
+# Managed by Slipstream — bootstrap panel ingress
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    location /.well-known/acme-challenge/ { root /var/www/slipstream-acme; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+    server_name _;
+    server_tokens off;
+    ssl_certificate /etc/slipstream/certs/panel.pem;
+    ssl_certificate_key /etc/slipstream/certs/panel.key;
+    location / {
+        proxy_pass https://127.0.0.1:5252;
+        proxy_ssl_verify off;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+NGINX
 # The panel owns everything under conf.d/slipstream-* and sites-enabled/.
 nginx -t >/dev/null
 
@@ -134,40 +172,38 @@ systemctl enable --now mariadb >/dev/null
 
 # ---------- services ----------
 log "Installing systemd services…"
-for unit in slipstream-agent slipstream-api; do
+for unit in slipstream-agent.service slipstream-api.service slipstream-api.socket; do
   if [[ -n "${SLIPSTREAM_LOCAL_BUILD:-}" ]]; then
-    install -m 0644 "${SLIPSTREAM_LOCAL_BUILD}/../installer/systemd/${unit}.service" /etc/systemd/system/
+    install -m 0644 "${SLIPSTREAM_LOCAL_BUILD}/../installer/systemd/${unit}" /etc/systemd/system/
   else
-    curl -fsSL -o "/etc/systemd/system/${unit}.service" "${RELEASE_URL}/${unit}.service"
+    curl -fsSL -o "/etc/systemd/system/${unit}" "${RELEASE_URL}/${unit}"
   fi
 done
 systemctl daemon-reload
-systemctl enable --now slipstream-agent slipstream-api nginx "php${PHP_VERSION}-fpm" >/dev/null
+systemctl enable --now slipstream-api.socket slipstream-agent slipstream-api nginx "php${PHP_VERSION}-fpm" >/dev/null
 
 # ---------- firewall ----------
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
-  log "Opening firewall ports 22, 80, 443, 5252…"
+  log "Opening firewall ports 22, 80 and 443…"
   ufw allow 22/tcp >/dev/null
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
-  ufw allow 5252/tcp >/dev/null
 fi
 
-# Per-site SFTP: a chrooted internal-sftp subsystem for slip-site-* users so
-# customers can move files without a shell or access to other sites.
-if ! grep -q "Slipstream SFTP" /etc/ssh/sshd_config 2>/dev/null; then
-  cat >> /etc/ssh/sshd_config <<'SSHD'
-
+# Per-site SFTP: each site root is a root-owned chroot whose children remain
+# writable by that site's nologin identity.
+cat > /etc/ssh/sshd_config.d/10-slipstream-sftp.conf <<'SSHD'
 # Slipstream SFTP — chrooted, no shell, per-site isolation
 Match User slip-site-*
     ChrootDirectory %h
-    ForceCommand internal-sftp
+    ForceCommand internal-sftp -d /
     AllowTcpForwarding no
     X11Forwarding no
     PasswordAuthentication yes
+    PermitEmptyPasswords no
 SSHD
-  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
-fi
+sshd -t
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
 # ---------- done ----------
 IP=$(curl -fsS -4 --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
@@ -178,7 +214,7 @@ SETUP_URL=${SETUP_URL/<server-ip>/$IP}
 echo
 log "Installation complete."
 echo
-echo "  Open:  ${SETUP_URL:-https://$IP:5252}"
+echo "  Open:  ${SETUP_URL:-https://$IP}"
 echo
 echo "  The setup link is valid for 24 hours."
 echo "  (Your browser will warn about the self-signed certificate — expected on first boot.)"

@@ -32,7 +32,7 @@ export default function Settings() {
       <div className="card-list">
         <div className="card">
           <div className="card-head"><span className="card-ico"><Icon.globe /></span><h3 style={{ margin: 0 }}>Panel domain & HTTPS</h3></div>
-          <p className="note">Point a domain at this server, then get a real certificate for the panel itself. Runs on port 5252.</p>
+          <p className="note">Point a domain at this server, then secure the panel with an automatically renewed certificate.</p>
           <label>Panel domain</label>
           <input value={panelDomain} onChange={(e) => setPanelDomain(e.target.value)} placeholder="panel.yourdomain.com" />
           <button className="mt" disabled={busy || !panelDomain || !settings.acme_email} onClick={issuePanelCert}>Secure panel with Let's Encrypt</button>

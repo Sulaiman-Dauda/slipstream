@@ -78,6 +78,14 @@ export interface SystemStatus {
   disk_headroom_pct: number;
 }
 
+export interface MetricSample {
+  cpu_headroom_pct: number;
+  mem_headroom_pct: number;
+  disk_headroom_pct: number;
+  load1: number;
+  sampled_at: string;
+}
+
 export interface DriftEvent {
   id: number;
   path: string;
@@ -153,6 +161,7 @@ export interface PanelUser {
   id: number;
   email: string;
   role: string;
+  site_ids?: number[];
   totp_enabled: boolean;
   created_at: string;
 }

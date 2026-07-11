@@ -1,14 +1,17 @@
 [Unit]
 Description=Slipstream control panel API
-After=network.target slipstream-agent.service
+After=network.target slipstream-agent.service slipstream-api.socket
 Wants=slipstream-agent.service
+Requires=slipstream-api.socket
 
 [Service]
 Type=simple
 User=slipstream
 Group=slipstream
+UMask=0027
 EnvironmentFile=-/etc/slipstream/panel.env
 ExecStart=/usr/local/bin/panel-api
+Sockets=slipstream-api.socket
 Restart=on-failure
 RestartSec=2
 

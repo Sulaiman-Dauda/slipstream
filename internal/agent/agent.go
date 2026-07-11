@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/slipstream-panel/slipstream/internal/engine"
 	"github.com/slipstream-panel/slipstream/internal/engine/nginx"
@@ -40,13 +41,13 @@ type Paths struct {
 // DefaultPaths is the production layout created by the installer.
 func DefaultPaths() Paths {
 	return Paths{
-		SitesRoot:    "/srv/sites",
-		CacheRoot:    "/var/cache/slipstream",
-		LogRoot: "/var/log/slipstream",
+		SitesRoot: "/srv/sites",
+		CacheRoot: "/var/cache/slipstream",
+		LogRoot:   "/var/log/slipstream",
 		// Outside /var/lib/slipstream on purpose: nginx (www-data) must be
 		// able to traverse to the challenge files, and the panel state dir
 		// is deliberately closed to it.
-		ACMEWebroot: "/var/www/slipstream-acme",
+		ACMEWebroot:  "/var/www/slipstream-acme",
 		FallbackCert: "/etc/slipstream/certs/fallback.pem",
 		FallbackKey:  "/etc/slipstream/certs/fallback.key",
 		CertLiveDir:  "/etc/letsencrypt/live",
@@ -64,6 +65,7 @@ type Agent struct {
 	Runner   Runner
 	Renderer engine.Renderer
 	Log      *slog.Logger
+	certMu   sync.Mutex // certbot permits only one process against its state
 }
 
 // New creates an agent with production defaults.
@@ -96,6 +98,7 @@ func (a *Agent) RegisterAll(s *rpc.Server) {
 	s.Handle(rpc.MethodPromoteRelease, typed(a.PromoteRelease))
 	s.Handle(rpc.MethodRollbackRelease, typed(a.RollbackRelease))
 	s.Handle(rpc.MethodCreateStaging, typed(a.CreateStaging))
+	s.Handle(rpc.MethodSyncStagingDB, typed(a.SyncStagingDatabase))
 	s.Handle(rpc.MethodRunBackup, typed(a.RunBackup))
 	s.Handle(rpc.MethodRestoreSnapshot, typed(a.RestoreSnapshot))
 	s.Handle(rpc.MethodVerifyBackup, typed(a.VerifyBackup))
@@ -110,15 +113,20 @@ func (a *Agent) RegisterAll(s *rpc.Server) {
 	s.Handle(rpc.MethodServiceStatus, func(json.RawMessage) (any, error) { return a.ServiceStatus() })
 	s.Handle(rpc.MethodTailLog, typed(a.TailLog))
 	s.Handle(rpc.MethodWriteCrontab, typed(a.WriteCrontab))
+	s.Handle(rpc.MethodRunCron, typed(a.RunCron))
 	s.Handle(rpc.MethodFirewallStatus, func(json.RawMessage) (any, error) { return a.FirewallStatus() })
 	s.Handle(rpc.MethodFirewallRule, typed(a.FirewallRule))
 	s.Handle(rpc.MethodDBQuery, typed(a.DBQuery))
 	s.Handle(rpc.MethodDBExport, typed(a.DBExport))
+	s.Handle(rpc.MethodDBImport, typed(a.DBImport))
 	s.Handle(rpc.MethodLaunchAdminer, typed(a.LaunchAdminer))
 	s.Handle(rpc.MethodListFiles, typed(a.ListFiles))
 	s.Handle(rpc.MethodReadFile, typed(a.ReadFile))
 	s.Handle(rpc.MethodWriteFile, typed(a.WriteFile))
+	s.Handle(rpc.MethodTransferFile, typed(a.TransferFile))
+	s.Handle(rpc.MethodManageFile, typed(a.ManageFile))
 	s.Handle(rpc.MethodSetSFTP, typed(a.SetSFTP))
+	s.Handle(rpc.MethodSSHKeys, typed(a.SSHKeys))
 	s.Handle(rpc.MethodWPMagicLogin, typed(a.WPMagicLogin))
 	s.Handle(rpc.MethodWPPlugins, typed(a.WPPlugins))
 	s.Handle(rpc.MethodWPUpdate, typed(a.WPUpdate))
@@ -128,6 +136,7 @@ func (a *Agent) RegisterAll(s *rpc.Server) {
 	s.Handle(rpc.MethodCacheStats, typed(a.CacheStats))
 	s.Handle(rpc.MethodWarmCache, typed(a.WarmCache))
 	s.Handle(rpc.MethodTestBackup, typed(a.TestBackup))
+	s.Handle(rpc.MethodImportMigration, typed(a.ImportMigration))
 }
 
 // typed adapts a strongly-typed handler to the raw RPC signature.

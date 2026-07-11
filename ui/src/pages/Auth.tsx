@@ -9,7 +9,7 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [token, setToken] = useState(setupToken);
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [totpRequired, setTotpRequired] = useState(false);
   const [error, setError] = useState("");
@@ -29,7 +29,9 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
     setError("");
     try {
       if (needsSetup) {
-        await api.post("/api/setup", { email, password, token });
+        if (!setupToken) throw new Error("Open the one-time setup link provided during installation.");
+        if (password !== confirmPassword) throw new Error("Passwords do not match.");
+        await api.post("/api/setup", { email, password, token: setupToken });
       } else {
         await api.post("/api/login", { email, password, totp });
       }
@@ -53,19 +55,18 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
         {needsSetup && <p className="dim sub-center">Create the administrator account to finish installation.</p>}
         {!needsSetup && !totpRequired && <p className="dim sub-center">Sign in to your control panel.</p>}
 
-        {needsSetup && (
-          <>
-            <label>Setup token</label>
-            <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="from the install output" required />
-          </>
-        )}
-
         {!totpRequired && (
           <>
             <label>Email</label>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
             <label>Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={needsSetup ? 12 : 1} required />
+            {needsSetup && (
+              <>
+                <label>Confirm password</label>
+                <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} minLength={12} required />
+              </>
+            )}
           </>
         )}
 

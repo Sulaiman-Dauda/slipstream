@@ -90,6 +90,10 @@ func (s *Server) handleDeleteCron(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "cron job not found")
 		return
 	}
+	if !s.canAccessSite(r, job.SiteID) {
+		respondErr(w, http.StatusNotFound, "cron job not found")
+		return
+	}
 	if err := s.Store.DeleteCronJob(id); err != nil {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -99,6 +103,32 @@ func (s *Server) handleDeleteCron(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(s.actor(r), "cron.delete", "", "")
 	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleRunCron(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	job, err := s.Store.GetCronJob(id)
+	if err != nil || !s.canAccessSite(r, job.SiteID) {
+		respondErr(w, http.StatusNotFound, "cron job not found")
+		return
+	}
+	site, err := s.Store.GetSite(job.SiteID)
+	if err != nil {
+		respondErr(w, http.StatusNotFound, "site not found")
+		return
+	}
+	var res rpc.RunCronResult
+	if err := s.Agent.Call(rpc.MethodRunCron, rpc.RunCronParams{SystemUser: site.SystemUser, Command: job.Command}, &res); err != nil {
+		respondErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	_ = s.Store.UpdateCronRun(job.ID, res.Status)
+	s.Store.Audit(s.actor(r), "cron.run", site.Domain, job.Description)
+	respond(w, http.StatusOK, res)
 }
 
 // renderCrontab rebuilds a site's entire crontab from desired state and
@@ -115,9 +145,14 @@ func (s *Server) renderCrontab(site state.Site) error {
 		if !j.Enabled {
 			continue
 		}
-		fmt.Fprintf(&b, "%s %s\n", j.Schedule, j.Command)
+		logPath := fmt.Sprintf("%s/logs/cron-%d.log", site.RootPath, j.ID)
+		script := fmt.Sprintf("printf '\\n[slipstream start %%s]\\n' \"$(date -Is)\"; { %s; }; status=$?; printf '[slipstream end %%s status=%%s]\\n' \"$(date -Is)\" \"$status\"; exit \"$status\"", j.Command)
+		rotate := fmt.Sprintf("status=$?; tail -n 500 %s > %s.tmp && mv %s.tmp %s; exit $status", shellQuote(logPath), shellQuote(logPath), shellQuote(logPath), shellQuote(logPath))
+		fmt.Fprintf(&b, "%s /bin/sh -c %s >> %s 2>&1; %s\n", j.Schedule, shellQuote(script), shellQuote(logPath), rotate)
 	}
 	return s.Agent.Call(rpc.MethodWriteCrontab, rpc.CrontabParams{
 		SystemUser: site.SystemUser, Content: b.String(),
 	}, nil)
 }
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }

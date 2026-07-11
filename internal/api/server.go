@@ -41,6 +41,9 @@ type Server struct {
 	// PanelPort is the HTTPS port the panel listens on (for redirects and
 	// panel-cert issuance).
 	PanelPort int
+	// Shutdown is closed when graceful process shutdown begins. Long-lived
+	// handlers use it to exit promptly instead of consuming the drain timeout.
+	Shutdown <-chan struct{}
 
 	loginLimiter *rateLimiter
 }
@@ -80,6 +83,8 @@ func (s *Server) Routes() http.Handler {
 	// accounts only; read-only accounts can view but not change.
 	auth := func(fn http.HandlerFunc) http.HandlerFunc { return s.requireSession(fn) }
 	admin := func(fn http.HandlerFunc) http.HandlerFunc { return s.requireAdmin(fn) }
+	manage := func(fn http.HandlerFunc) http.HandlerFunc { return s.requireSiteManager(fn) }
+	global := func(fn http.HandlerFunc) http.HandlerFunc { return s.requireGlobalViewer(fn) }
 
 	mux.HandleFunc("POST /api/logout", auth(s.handleLogout))
 	mux.HandleFunc("GET /api/me", auth(s.handleMe))
@@ -91,43 +96,52 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/account/2fa/disable", auth(s.handleTOTPDisable))
 	mux.HandleFunc("GET /api/account/sessions", auth(s.handleListSessions))
 	mux.HandleFunc("DELETE /api/account/sessions/{id}", auth(s.handleRevokeSession))
-	mux.HandleFunc("GET /api/users", auth(s.handleListUsers))
+	mux.HandleFunc("GET /api/users", global(s.handleListUsers))
 	mux.HandleFunc("POST /api/users", admin(s.handleCreateUser))
 	mux.HandleFunc("DELETE /api/users/{id}", admin(s.handleDeleteUser))
 
 	// Cron
 	mux.HandleFunc("GET /api/sites/{id}/cron", auth(s.handleListCron))
-	mux.HandleFunc("POST /api/sites/{id}/cron", admin(s.handleCreateCron))
-	mux.HandleFunc("DELETE /api/cron/{id}", admin(s.handleDeleteCron))
+	mux.HandleFunc("POST /api/sites/{id}/cron", manage(s.handleCreateCron))
+	mux.HandleFunc("DELETE /api/cron/{id}", manage(s.handleDeleteCron))
+	mux.HandleFunc("POST /api/cron/{id}/run", manage(s.handleRunCron))
 
 	// Database tools
 	mux.HandleFunc("GET /api/sites/{id}/database", auth(s.handleDatabaseInfo))
-	mux.HandleFunc("POST /api/sites/{id}/database/query", admin(s.handleDatabaseQuery))
-	mux.HandleFunc("POST /api/sites/{id}/database/export", admin(s.handleDatabaseExport))
-	mux.HandleFunc("POST /api/sites/{id}/database/adminer", admin(s.handleLaunchAdminer))
+	mux.HandleFunc("POST /api/sites/{id}/database/query", manage(s.handleDatabaseQuery))
+	mux.HandleFunc("POST /api/sites/{id}/database/export", manage(s.handleDatabaseExport))
+	mux.HandleFunc("POST /api/sites/{id}/database/import", manage(s.handleDatabaseImport))
+	mux.HandleFunc("POST /api/sites/{id}/database/adminer", manage(s.handleLaunchAdminer))
+	mux.HandleFunc("POST /api/sites/{id}/migration", manage(s.handleImportMigration))
 
 	// Files
 	mux.HandleFunc("GET /api/sites/{id}/files", auth(s.handleListFiles))
 	mux.HandleFunc("GET /api/sites/{id}/files/read", auth(s.handleReadFile))
-	mux.HandleFunc("POST /api/sites/{id}/files/write", admin(s.handleWriteFile))
-	mux.HandleFunc("POST /api/sites/{id}/sftp", admin(s.handleSetSFTP))
+	mux.HandleFunc("POST /api/sites/{id}/files/write", manage(s.handleWriteFile))
+	mux.HandleFunc("GET /api/sites/{id}/files/download", auth(s.handleDownloadFile))
+	mux.HandleFunc("POST /api/sites/{id}/files/upload", manage(s.handleUploadFile))
+	mux.HandleFunc("POST /api/sites/{id}/files/manage", manage(s.handleManageFile))
+	mux.HandleFunc("POST /api/sites/{id}/sftp", manage(s.handleSetSFTP))
+	mux.HandleFunc("GET /api/sites/{id}/ssh-keys", auth(s.handleListSSHKeys))
+	mux.HandleFunc("POST /api/sites/{id}/ssh-keys", manage(s.handleAddSSHKey))
+	mux.HandleFunc("DELETE /api/sites/{id}/ssh-keys/{fingerprint}", manage(s.handleDeleteSSHKey))
 
 	// PHP settings
-	mux.HandleFunc("PUT /api/sites/{id}/php", admin(s.handlePHPSettings))
+	mux.HandleFunc("PUT /api/sites/{id}/php", manage(s.handlePHPSettings))
 
 	// WordPress toolkit
-	mux.HandleFunc("POST /api/sites/{id}/wp/login", admin(s.handleWPMagicLogin))
+	mux.HandleFunc("POST /api/sites/{id}/wp/login", manage(s.handleWPMagicLogin))
 	mux.HandleFunc("GET /api/sites/{id}/wp/plugins", auth(s.handleWPPlugins))
-	mux.HandleFunc("POST /api/sites/{id}/wp/update", admin(s.handleWPUpdate))
-	mux.HandleFunc("POST /api/sites/{id}/wp/object-cache", admin(s.handleWPObjectCache))
+	mux.HandleFunc("POST /api/sites/{id}/wp/update", manage(s.handleWPUpdate))
+	mux.HandleFunc("POST /api/sites/{id}/wp/object-cache", manage(s.handleWPObjectCache))
 	mux.HandleFunc("GET /api/sites/{id}/cache-stats", auth(s.handleCacheStats))
-	mux.HandleFunc("POST /api/sites/{id}/warm", admin(s.handleWarmCache))
+	mux.HandleFunc("POST /api/sites/{id}/warm", manage(s.handleWarmCache))
 
 	// Services, firewall, panel cert
-	mux.HandleFunc("GET /api/services", auth(s.handleListServices))
+	mux.HandleFunc("GET /api/services", global(s.handleListServices))
 	mux.HandleFunc("POST /api/services/{name}/restart", admin(s.handleRestartService))
 	mux.HandleFunc("GET /api/logs", auth(s.handleReadLog))
-	mux.HandleFunc("GET /api/firewall", auth(s.handleFirewallStatus))
+	mux.HandleFunc("GET /api/firewall", global(s.handleFirewallStatus))
 	mux.HandleFunc("POST /api/firewall/rule", admin(s.handleFirewallRule))
 	mux.HandleFunc("POST /api/panel/certificate", admin(s.handlePanelCertificate))
 	mux.HandleFunc("POST /api/panel/update", admin(s.handleSelfUpdate))
@@ -136,20 +150,23 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/sites", admin(s.handleCreateSite))
 	mux.HandleFunc("GET /api/sites/{id}", auth(s.handleGetSite))
 	mux.HandleFunc("DELETE /api/sites/{id}", admin(s.handleDeleteSite))
-	mux.HandleFunc("POST /api/sites/{id}/purge", admin(s.handlePurge))
-	mux.HandleFunc("POST /api/sites/{id}/certificate", admin(s.handleIssueCertificate))
-	mux.HandleFunc("POST /api/sites/{id}/staging", admin(s.handleCreateStaging))
-	mux.HandleFunc("PUT /api/sites/{id}/config", admin(s.handleUpdateSiteConfig))
+	mux.HandleFunc("POST /api/sites/{id}/purge", manage(s.handlePurge))
+	mux.HandleFunc("POST /api/sites/{id}/certificate", manage(s.handleIssueCertificate))
+	mux.HandleFunc("POST /api/sites/{id}/staging", manage(s.handleCreateStaging))
+	mux.HandleFunc("PUT /api/sites/{id}/config", manage(s.handleUpdateSiteConfig))
 
 	mux.HandleFunc("GET /api/sites/{id}/deployments", auth(s.handleListDeployments))
-	mux.HandleFunc("POST /api/sites/{id}/deployments", admin(s.handleDeploy))
-	mux.HandleFunc("POST /api/sites/{id}/safe-push", admin(s.handleSafePush))
-	mux.HandleFunc("POST /api/deployments/{id}/promote", admin(s.handlePromote))
-	mux.HandleFunc("POST /api/sites/{id}/rollback", admin(s.handleRollback))
+	mux.HandleFunc("POST /api/sites/{id}/deployments", manage(s.handleDeploy))
+	mux.HandleFunc("POST /api/sites/{id}/safe-push", manage(s.handleSafePush))
+	mux.HandleFunc("GET /api/sites/{id}/staging/tables", auth(s.handleStagingTables))
+	mux.HandleFunc("POST /api/sites/{id}/staging/database", manage(s.handlePushStagingDatabase))
+	mux.HandleFunc("POST /api/deployments/{id}/promote", manage(s.handlePromote))
+	mux.HandleFunc("POST /api/sites/{id}/rollback", manage(s.handleRollback))
 
 	mux.HandleFunc("GET /api/sites/{id}/backups", auth(s.handleListBackups))
-	mux.HandleFunc("POST /api/sites/{id}/backups", admin(s.handleRunBackup))
-	mux.HandleFunc("POST /api/backups/{id}/verify", admin(s.handleVerifyBackup))
+	mux.HandleFunc("POST /api/sites/{id}/backups", manage(s.handleRunBackup))
+	mux.HandleFunc("POST /api/backups/{id}/verify", manage(s.handleVerifyBackup))
+	mux.HandleFunc("POST /api/backups/{id}/restore", manage(s.handleRestoreBackup))
 	mux.HandleFunc("POST /api/backups/test", admin(s.handleTestBackupRepo))
 
 	mux.HandleFunc("GET /api/tasks", auth(s.handleListTasks))
@@ -157,10 +174,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/events", auth(s.handleEvents))
 
 	mux.HandleFunc("GET /api/system/status", auth(s.handleSystemStatus))
-	mux.HandleFunc("GET /api/system/drift", auth(s.handleListDrift))
+	mux.HandleFunc("GET /api/system/metrics", auth(s.handleSystemMetrics))
+	mux.HandleFunc("GET /api/system/drift", global(s.handleListDrift))
 	mux.HandleFunc("POST /api/system/drift/{id}/resolve", admin(s.handleResolveDrift))
-	mux.HandleFunc("GET /api/audit", auth(s.handleAudit))
-	mux.HandleFunc("GET /api/settings", auth(s.handleGetSettings))
+	mux.HandleFunc("GET /api/audit", global(s.handleAudit))
+	mux.HandleFunc("GET /api/settings", global(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/settings", admin(s.handlePutSettings))
 
 	// Unauthenticated liveness probe for monitors/load balancers.
@@ -190,6 +208,8 @@ func (s *Server) withCommonHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -261,6 +281,10 @@ func (s *Server) siteOr404(w http.ResponseWriter, r *http.Request) (state.Site, 
 	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, err.Error())
+		return state.Site{}, false
+	}
+	if !s.canAccessSite(r, site.ID) {
+		respondErr(w, http.StatusNotFound, "site not found")
 		return state.Site{}, false
 	}
 	return site, true

@@ -44,7 +44,14 @@ func defaultProfile(t state.SiteType) state.Profile {
 }
 
 func (s *Server) handleListSites(w http.ResponseWriter, r *http.Request) {
-	sites, err := s.Store.ListSites()
+	user, _ := s.sessionUser(r)
+	var sites []state.Site
+	var err error
+	if user.Role == "operator" {
+		sites, err = s.Store.ListSitesForUser(user.ID)
+	} else {
+		sites, err = s.Store.ListSites()
+	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -176,11 +183,11 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dbPassword := randomToken(24)
+	connectorToken := randomToken(24)
 	s.Store.SetSetting(secretKey(created.ID, "db_password"), dbPassword)
-	s.Store.SetSetting(secretKey(created.ID, "connector_token"), randomToken(24))
+	s.Store.SetSetting(secretKey(created.ID, "connector_token"), connectorToken)
 	s.Store.Audit(s.actor(r), "site.create", created.Domain, string(created.Type))
 
-	connectorToken, _ := s.Store.GetSetting(secretKey(created.ID, "connector_token"), "")
 	task, err := s.runTask("site.create", created.ID, func(progress func(int, string)) error {
 		progress(10, "Provisioning "+created.Domain)
 		params := rpc.CreateSiteParams{
@@ -196,12 +203,16 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		}
 		var res rpc.CreateSiteResult
 		if err := s.Agent.Call(rpc.MethodCreateSite, params, &res); err != nil {
-			s.markSiteError(created.ID)
+			s.rollbackCreatedSite(created)
 			return err
 		}
 		progress(60, "Configuration rendered, recording state")
 		for _, f := range res.Files {
-			s.Store.RecordManagedFile(f.Path, f.SHA256)
+			if err := s.Store.RecordManagedFile(f.Path, f.SHA256); err != nil {
+				s.Agent.Call(rpc.MethodDeleteSite, rpc.SiteRef{Site: created}, nil)
+				s.rollbackCreatedSite(created)
+				return fmt.Errorf("record managed configuration: %w", err)
+			}
 		}
 
 		if email, _ := s.Store.GetSetting("acme_email", ""); email != "" {
@@ -218,6 +229,8 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 
 		created.Status = state.SiteActive
 		if err := s.Store.UpdateSite(created); err != nil {
+			s.Agent.Call(rpc.MethodDeleteSite, rpc.SiteRef{Site: created}, nil)
+			s.rollbackCreatedSite(created)
 			return err
 		}
 		progress(100, created.Domain+" is live")
@@ -228,6 +241,15 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusAccepted, map[string]any{"site": created, "task": task})
+}
+
+func (s *Server) rollbackCreatedSite(site state.Site) {
+	for path := range managedFilesForSite(s, site) {
+		s.Store.RemoveManagedFile(path)
+	}
+	s.Store.SetSetting(secretKey(site.ID, "db_password"), "")
+	s.Store.SetSetting(secretKey(site.ID, "connector_token"), "")
+	s.Store.DeleteSite(site.ID)
 }
 
 func (s *Server) markSiteError(id int64) {
@@ -257,21 +279,29 @@ func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task, err := s.runTask("site.delete", site.ID, func(progress func(int, string)) error {
-		removeOne := func(target state.Site) {
-			s.Agent.Call(rpc.MethodDeleteSite, rpc.SiteRef{Site: target}, nil)
+		removeOne := func(target state.Site) error {
+			if err := s.Agent.Call(rpc.MethodDeleteSite, rpc.SiteRef{Site: target}, nil); err != nil {
+				target.Status = state.SiteError
+				s.Store.UpdateSite(target)
+				return fmt.Errorf("remove %s: %w", target.Domain, err)
+			}
 			for path := range managedFilesForSite(s, target) {
 				s.Store.RemoveManagedFile(path)
 			}
 			s.Store.SetSetting(secretKey(target.ID, "db_password"), "")
 			s.Store.SetSetting(secretKey(target.ID, "connector_token"), "")
-			s.Store.DeleteSite(target.ID)
+			return s.Store.DeleteSite(target.ID)
 		}
 		if staging != nil {
 			progress(15, "Removing staging environment "+staging.Domain)
-			removeOne(*staging)
+			if err := removeOne(*staging); err != nil {
+				return err
+			}
 		}
 		progress(50, "Removing "+site.Domain)
-		removeOne(site)
+		if err := removeOne(site); err != nil {
+			return err
+		}
 		progress(100, "Removed")
 		return nil
 	})
@@ -464,16 +494,18 @@ func (s *Server) handleCreateStaging(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dbPassword := randomToken(24)
+	connectorToken := randomToken(24)
 	s.Store.SetSetting(secretKey(created.ID, "db_password"), dbPassword)
+	s.Store.SetSetting(secretKey(created.ID, "connector_token"), connectorToken)
 	s.Store.Audit(s.actor(r), "staging.create", prod.Domain, created.Domain)
 
 	task, err := s.runTask("staging.create", prod.ID, func(progress func(int, string)) error {
 		progress(20, "Cloning "+prod.Domain+" to "+created.Domain)
 		var res rpc.CreateSiteResult
 		if err := s.Agent.Call(rpc.MethodCreateStaging, rpc.StagingParams{
-			Production: prod, Staging: created, DBPassword: dbPassword,
+			Production: prod, Staging: created, DBPassword: dbPassword, ConnectorToken: connectorToken,
 		}, &res); err != nil {
-			s.markSiteError(created.ID)
+			s.rollbackCreatedSite(created)
 			return err
 		}
 		for _, f := range res.Files {

@@ -50,7 +50,7 @@ export default function Firewall() {
           <label>Restrict to source IP <span className="hint">optional — e.g. lock the panel to your IP</span></label>
           <input value={from} onChange={(e) => setFrom(e.target.value)} placeholder="203.0.113.4" />
           <button className="mt" disabled={busy}>Apply rule</button>
-          <p className="note tiny">Tip: keep 22 (SSH), 80, 443 and 5252 (panel) open. To lock the panel to your office, allow 5252 from your IP and delete the open 5252 rule.</p>
+          <p className="note tiny">Keep 22 (SSH), 80 and 443 open. For tighter security, restrict SSH and panel access to trusted source IPs.</p>
         </form>
       </div>
     </>

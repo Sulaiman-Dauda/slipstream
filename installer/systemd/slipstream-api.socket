@@ -1,0 +1,10 @@
+[Unit]
+Description=Slipstream panel API loopback socket
+
+[Socket]
+ListenStream=127.0.0.1:5252
+NoDelay=true
+Backlog=4096
+
+[Install]
+WantedBy=sockets.target
