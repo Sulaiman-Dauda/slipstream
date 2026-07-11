@@ -138,10 +138,11 @@ func RenderPool(site state.Site, siteMemMB int) (path, content string, err error
 	if apcuMB > 256 {
 		apcuMB = 256
 	}
+	// OPcache preload is intentionally NOT auto-enabled: live benchmarking on
+	// a config-cached Laravel app showed a marginal, noise-level gain
+	// (~3ms) against real cost — it can fatal PHP-FPM if the file is missing
+	// and must be regenerated on every deploy. Left as an explicit opt-in.
 	preload := ""
-	if site.Type == state.SiteLaravel {
-		preload = filepath.Join(site.RootPath, "current", "slipstream-preload.php")
-	}
 	v := poolVars{
 		Site:        site,
 		Socket:      SocketFor(site.SystemUser),

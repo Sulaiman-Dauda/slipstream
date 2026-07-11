@@ -252,11 +252,6 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		if err := os.WriteFile(index, []byte(placeholderHTML(site.Domain)), 0o644); err != nil {
 			return result, err
 		}
-	case state.SiteLaravel:
-		// A minimal, always-valid preload file so opcache.preload never
-		// points at a missing path (which would stop PHP-FPM).
-		os.WriteFile(filepath.Join(releaseDir, "slipstream-preload.php"),
-			[]byte("<?php\n// Slipstream OPcache preload. Regenerated on deploy.\n"), 0o644)
 	}
 
 	// Precompress static assets so nginx serves ready-made .gz.
