@@ -28,16 +28,18 @@ func (a *Agent) WPMagicLogin(p rpc.WPParams) (rpc.WPLoginResult, error) {
 		return rpc.WPLoginResult{}, err
 	}
 	ctx := context.Background()
-	// Ensure the wp-cli login command is available (installs on first use).
-	if _, err := a.wp(ctx, p.Site, "login", "create", "--help"); err != nil {
+	// Ensure the wp-cli login command package is available (installs once).
+	if _, err := a.wp(ctx, p.Site, "login", "--help"); err != nil {
 		if _, err := a.Runner.Run(ctx, "runuser", "-u", p.Site.SystemUser, "--",
 			"wp", "--path="+filepath.Join(p.Site.RootPath, "current"),
 			"package", "install", "aaemnnosttv/wp-cli-login-command"); err != nil {
 			return rpc.WPLoginResult{}, fmt.Errorf("install login command: %w", err)
 		}
 	}
-	// Ensure the companion mu-plugin server is toggled on.
-	a.wp(ctx, p.Site, "login", "toggle", "--activate")
+	// Install + activate the companion mu-plugin that serves magic links.
+	if _, err := a.wp(ctx, p.Site, "login", "install", "--activate", "--yes"); err != nil {
+		return rpc.WPLoginResult{}, fmt.Errorf("activate login companion: %w", err)
+	}
 
 	// Find the admin user (lowest ID with administrator role).
 	adminUser, err := a.wp(ctx, p.Site, "user", "list", "--role=administrator", "--field=user_login", "--number=1")
