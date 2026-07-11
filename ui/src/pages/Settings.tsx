@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
 import { useAction, useToast } from "../components/ui";
+import { Icon } from "../icons";
 
 export default function Settings() {
   const toast = useToast();
@@ -30,29 +31,29 @@ export default function Settings() {
 
       <div className="card-list">
         <div className="card">
-          <h3>Panel domain & HTTPS</h3>
-          <p className="dim" style={{ fontSize: 13 }}>Point a domain at this server, then get a real certificate for the panel itself. Runs on port 5252.</p>
+          <div className="card-head"><span className="card-ico"><Icon.globe /></span><h3 style={{ margin: 0 }}>Panel domain & HTTPS</h3></div>
+          <p className="note">Point a domain at this server, then get a real certificate for the panel itself. Runs on port 5252.</p>
           <label>Panel domain</label>
           <input value={panelDomain} onChange={(e) => setPanelDomain(e.target.value)} placeholder="panel.yourdomain.com" />
           <button className="mt" disabled={busy || !panelDomain || !settings.acme_email} onClick={issuePanelCert}>Secure panel with Let's Encrypt</button>
-          {!settings.acme_email && <p className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Set the ACME email below first.</p>}
+          {!settings.acme_email && <p className="note tiny">Set the ACME email below first.</p>}
         </div>
 
         <form className="card" onSubmit={saveSettings}>
-          <h3>Certificates</h3>
+          <div className="card-head"><span className="card-ico"><Icon.lock /></span><h3 style={{ margin: 0 }}>Certificates</h3></div>
           <label>ACME account email</label>
           <input type="email" placeholder="ops@example.com" {...bind("acme_email")} />
-          <p className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Used for Let's Encrypt registration and expiry notices. Sites get certificates and auto-renewal automatically.</p>
+          <p className="note tiny">Used for Let's Encrypt registration and expiry notices. Sites get certificates and auto-renewal automatically.</p>
           <button className="mt" disabled={busy}>Save</button>
         </form>
 
         <form className="card" onSubmit={saveSettings}>
-          <h3>Off-site backups (Restic)</h3>
+          <div className="card-head"><span className="card-ico"><Icon.database /></span><h3 style={{ margin: 0 }}>Off-site backups (Restic)</h3></div>
           <label>Repository</label>
           <input placeholder="s3:s3.amazonaws.com/my-backups" {...bind("backup_repository")} />
           <label>Repository password</label>
           <input type="password" {...bind("backup_password")} />
-          <p className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Backups are encrypted before leaving this server and run automatically on each site's schedule. Losing this password means losing the backups.</p>
+          <p className="note tiny">Backups are encrypted before leaving this server and run automatically on each site's schedule. Losing this password means losing the backups.</p>
           <div className="row mt">
             <button disabled={busy}>Save</button>
             <button type="button" className="ghost" disabled={busy} onClick={() => run(async () => { const r = await api.post<{ snapshots: number }>("/api/backups/test"); toast.ok(`Repository reachable — ${r.snapshots} snapshot(s).`); })}>Test connection</button>
@@ -60,19 +61,19 @@ export default function Settings() {
         </form>
 
         <form className="card" onSubmit={saveSettings}>
-          <h3>Performance Guard</h3>
+          <div className="card-head"><span className="card-ico"><Icon.gauge /></span><h3 style={{ margin: 0 }}>Performance Guard</h3></div>
           <label>Probe target</label>
           <input placeholder="https://127.0.0.1" {...bind("probe_target")} />
-          <p className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Where Safe Push sends measurement traffic. Loopback by default so probes never leave the machine.</p>
+          <p className="note tiny">Where Safe Push sends measurement traffic. Loopback by default so probes never leave the machine.</p>
           <button className="mt" disabled={busy}>Save</button>
         </form>
 
         <div className="card">
-          <h3>Panel updates</h3>
-          <p className="dim" style={{ fontSize: 13 }}>Download and install the latest signed Slipstream binaries, then restart.</p>
+          <div className="card-head"><span className="card-ico"><Icon.download /></span><h3 style={{ margin: 0 }}>Panel updates</h3></div>
+          <p className="note">Download and install the latest signed Slipstream binaries, then restart.</p>
           <label>Update URL <span className="hint">optional override</span></label>
           <input {...bind("update_url")} placeholder="https://releases.slipstream…/1.1.0" />
-          <button className="ghost mt" disabled={busy} onClick={() => run(() => api.post("/api/panel/update", { base_url: settings.update_url }), "Update started")}>Check & update</button>
+          <button className="ghost mt" disabled={busy} onClick={() => run(() => api.post("/api/panel/update", { base_url: settings.update_url }), "Update started")}><Icon.refresh /> Check & update</button>
         </div>
       </div>
     </>

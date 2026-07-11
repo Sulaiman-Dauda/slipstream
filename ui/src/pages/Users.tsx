@@ -1,7 +1,8 @@
 import { FormEvent, useState } from "react";
 import { api, fmtAgo } from "../api";
 import { PanelUser } from "../types";
-import { Modal, useAction, usePoll, useToast } from "../components/ui";
+import { Modal, Skeleton, useAction, usePoll, useToast } from "../components/ui";
+import { Icon } from "../icons";
 
 export default function Users() {
   const { data: users, error, reload } = usePoll<PanelUser[]>("/api/users", 0);
@@ -13,26 +14,29 @@ export default function Users() {
     <>
       <div className="topbar">
         <div><h1>Users</h1><p className="sub">Panel administrators. Everyone here can manage the whole server.</p></div>
-        <button onClick={() => setCreating(true)}>+ Add user</button>
+        <button onClick={() => setCreating(true)}><Icon.plus /> Add user</button>
       </div>
       {toast.node}
-      {error && <div className="error-box">{error}</div>}
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Email</th><th>Role</th><th>2FA</th><th>Added</th><th></th></tr></thead>
-          <tbody>
-            {(users || []).map((u) => (
-              <tr key={u.id}>
-                <td>{u.email}</td>
-                <td><span className="badge dim plain">{u.role}</span></td>
-                <td>{u.totp_enabled ? <span className="badge good">on</span> : <span className="badge dim">off</span>}</td>
-                <td className="dim">{fmtAgo(u.created_at)}</td>
-                <td><button className="danger tiny" onClick={() => { if (confirm(`Remove ${u.email}?`)) run(() => api.del(`/api/users/${u.id}`), "User removed").then(reload); }}>Remove</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {error && <div className="error-box"><Icon.warning /> {error}</div>}
+      {!users ? (!error && <Skeleton count={3} />) : (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Email</th><th>Role</th><th>2FA</th><th>Added</th><th></th></tr></thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id}>
+                  <td>{u.email}</td>
+                  <td><span className="badge dim plain">{u.role}</span></td>
+                  <td>{u.totp_enabled ? <span className="badge good">on</span> : <span className="badge dim">off</span>}</td>
+                  <td className="dim">{fmtAgo(u.created_at)}</td>
+                  <td><button className="danger tiny" onClick={() => { if (confirm(`Remove ${u.email}?`)) run(() => api.del(`/api/users/${u.id}`), "User removed").then(reload); }}>Remove</button></td>
+                </tr>
+              ))}
+              {users.length === 0 && <tr><td colSpan={5} className="dim">No users yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
       {creating && <CreateUser onClose={() => { setCreating(false); reload(); }} />}
     </>
   );

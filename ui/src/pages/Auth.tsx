@@ -50,8 +50,8 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
     <div className="auth-shell">
       <form className="card auth-card pad-lg" onSubmit={submit}>
         <div className="logo"><span className="dot" /> Slipstream</div>
-        {needsSetup && <p className="dim" style={{ textAlign: "center", marginTop: -8 }}>Create the administrator account to finish installation.</p>}
-        {!needsSetup && !totpRequired && <p className="dim" style={{ textAlign: "center", marginTop: -8 }}>Sign in to your control panel.</p>}
+        {needsSetup && <p className="dim sub-center">Create the administrator account to finish installation.</p>}
+        {!needsSetup && !totpRequired && <p className="dim sub-center">Sign in to your control panel.</p>}
 
         {needsSetup && (
           <>
@@ -71,16 +71,16 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
 
         {totpRequired && (
           <>
-            <p className="dim" style={{ textAlign: "center" }}>Enter the 6-digit code from your authenticator app.</p>
+            <p className="dim sub-center">Enter the 6-digit code from your authenticator app.</p>
             <label>Two-factor code</label>
             <input value={totp} onChange={(e) => setTotp(e.target.value)} inputMode="numeric" maxLength={6}
-              placeholder="000000" autoFocus style={{ textAlign: "center", letterSpacing: "0.3em", fontSize: 20 }} />
+              placeholder="000000" autoFocus className="totp-input" />
           </>
         )}
 
         {error && <div className="error-box">{error}</div>}
-        <button style={{ width: "100%", marginTop: 20 }} disabled={busy}>
-          {busy ? "…" : needsSetup ? "Create account" : totpRequired ? "Verify" : "Sign in"}
+        <button className="btn-block mt-lg" disabled={busy}>
+          {busy ? <span className="spinner on-accent" /> : needsSetup ? "Create account" : totpRequired ? "Verify" : "Sign in"}
         </button>
       </form>
     </div>

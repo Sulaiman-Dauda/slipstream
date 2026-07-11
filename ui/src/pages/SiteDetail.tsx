@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, fmtAgo, fmtBytes, fmtDuration } from "../api";
 import { Backup, Deployment, GuardReport, Site } from "../types";
-import { StatusBadge, useAction, useToast, usePoll } from "../components/ui";
+import { CopyButton, Skeleton, StatusBadge, useAction, useToast, usePoll } from "../components/ui";
 import GuardReportView from "../components/GuardReport";
 import TaskFeed from "../components/TaskFeed";
 import { Icon } from "../icons";
@@ -63,7 +63,7 @@ export default function SiteDetail() {
         </div>
         <div className="row">
           <a className="btn ghost" href={`https://${site.domain}`} target="_blank" rel="noreferrer"><Icon.external /> Visit</a>
-          <button className="danger" onClick={() => { if (confirm(`Delete ${site.domain} and all its data? This cannot be undone.`)) run(() => api.del(`/api/sites/${site.id}`), "Deletion started").then((ok) => { if (ok) navigate("/sites"); }); }}>Delete</button>
+          <button className="danger" onClick={() => { if (confirm(`Delete ${site.domain} and all its data? This cannot be undone.`)) run(() => api.del(`/api/sites/${site.id}`), "Deletion started").then((ok) => { if (ok) navigate("/sites"); }); }}><Icon.trash /> Delete</button>
         </div>
       </div>
 
@@ -95,22 +95,22 @@ type RunFn = (fn: () => Promise<unknown>, ok?: string) => Promise<boolean>;
 
 function Overview({ site, run, onChange }: { site: Site; run: RunFn; onChange: () => void }) {
   return (
-    <div className="grid cols-3">
+    <div className="grid cols-3 stagger">
       <div className="card">
-        <h3>Velocity Engine</h3>
+        <div className="card-head"><span className={`card-ico ${site.config.cache_enabled ? "good" : "dim"}`}><Icon.bolt /></span><h3 style={{ margin: 0 }}>Velocity Engine</h3></div>
         <div className="stat-sm">{site.config.cache_enabled ? "On" : "Off"}</div>
-        <p className="dim" style={{ fontSize: 13 }}>Full-page cache with coalescing and stale-while-revalidate.</p>
+        <p className="note">Full-page cache with coalescing and stale-while-revalidate.</p>
       </div>
       <div className="card">
-        <h3>Staging</h3>
+        <div className="card-head"><span className="card-ico staging-ico"><Icon.layers /></span><h3 style={{ margin: 0 }}>Staging</h3></div>
         {site.staging_of ? <p className="dim">This is a staging environment.</p> : (
-          <><p className="dim" style={{ fontSize: 13 }}>Clone production to test changes, then Safe Push.</p>
+          <><p className="note">Clone production to test changes, then Safe Push.</p>
           <button className="small mt" onClick={() => run(() => api.post(`/api/sites/${site.id}/staging`), "Staging clone started").then(onChange)}>Create staging</button></>
         )}
       </div>
       <div className="card">
-        <h3>Certificate</h3>
-        <p className="dim" style={{ fontSize: 13 }}>Automatic Let's Encrypt, auto-renewed.</p>
+        <div className="card-head"><span className="card-ico"><Icon.lock /></span><h3 style={{ margin: 0 }}>Certificate</h3></div>
+        <p className="note">Automatic Let's Encrypt, auto-renewed.</p>
         <button className="small mt" onClick={() => run(() => api.post(`/api/sites/${site.id}/certificate`), "Certificate requested")}>Issue / renew</button>
       </div>
     </div>
@@ -126,9 +126,9 @@ function CacheTab({ site, onChange }: { site: Site; onChange: () => void }) {
   const [purgeURL, setPurgeURL] = useState("");
 
   return (
-    <div className="grid cols-2">
+    <div className="grid cols-2 stagger">
       <div className="card">
-        <h3>Cache policy</h3>
+        <div className="card-head"><span className="card-ico"><Icon.gauge /></span><h3 style={{ margin: 0 }}>Cache policy</h3></div>
         <label>Profile</label>
         <select value={profile} onChange={(e) => setProfile(e.target.value as Site["profile"])}>
           <option value="balanced">Balanced</option><option value="commerce">Commerce</option><option value="maximum">Maximum</option>
@@ -141,8 +141,8 @@ function CacheTab({ site, onChange }: { site: Site; onChange: () => void }) {
         <button className="mt" disabled={busy} onClick={() => run(() => api.put(`/api/sites/${site.id}/config`, { profile, cache_enabled: enabled, cache_ttl_sec: Number(ttl) || 0 }), "Configuration applied").then(onChange)}>Apply</button>
       </div>
       <div className="card">
-        <h3>Purge</h3>
-        <p className="dim" style={{ fontSize: 13 }}>Content changes purge precisely via the WordPress connector. Manual purges are here for everything else.</p>
+        <div className="card-head"><span className="card-ico"><Icon.refresh /></span><h3 style={{ margin: 0 }}>Purge</h3></div>
+        <p className="note">Content changes purge precisely via the WordPress connector. Manual purges are here for everything else.</p>
         <label>Purge one URL</label>
         <div className="row">
           <input value={purgeURL} onChange={(e) => setPurgeURL(e.target.value)} placeholder={`https://${site.domain}/post/`} />
@@ -158,14 +158,15 @@ function Deployments({ site, run }: { site: Site; run: RunFn }) {
   const { data: deps } = usePoll<Deployment[]>(`/api/sites/${site.id}/deployments`, 8000);
   const [expanded, setExpanded] = useState<number | null>(null);
   const badge: Record<string, string> = { created: "dim", guarding: "accent", blocked: "bad", promoted: "good", rolled_back: "warn" };
+  const guardBadge: Record<string, string> = { pass: "good", warn: "warn", block: "bad" };
 
   return (
     <>
       <div className="row mb">
         {!site.staging_of && <button onClick={() => run(() => api.post(`/api/sites/${site.id}/safe-push`), "Safe Push started — Performance Guard is comparing staging vs production")}>Safe Push from staging</button>}
-        <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/rollback`), "Rolling back to previous release")}>Instant rollback</button>
+        <button className="ghost" onClick={() => run(() => api.post(`/api/sites/${site.id}/rollback`), "Rolling back to previous release")}><Icon.history /> Instant rollback</button>
       </div>
-      {!deps || deps.length === 0 ? <div className="info-box">No releases yet. Safe Push from staging, or deploy with slipctl.</div> : (
+      {!deps ? <Skeleton /> : deps.length === 0 ? <div className="info-box">No releases yet. Safe Push from staging, or deploy with slipctl.</div> : (
         <div className="table-wrap">
           <table>
             <thead><tr><th>Release</th><th>Status</th><th>Guard</th><th>Created</th></tr></thead>
@@ -178,10 +179,14 @@ function Deployments({ site, run }: { site: Site; run: RunFn }) {
                     <tr>
                       <td className="mono">{d.release_id}</td>
                       <td><span className={`badge ${badge[d.status] || "dim"}`}>{d.status.replace("_", " ")}</span></td>
-                      <td>{guard ? <button className="ghost tiny" onClick={() => setExpanded(expanded === d.id ? null : d.id)}>{guard.verdict} ▾</button> : <span className="dim3">—</span>}</td>
+                      <td>{guard ? (
+                        <button className={`badge as-btn ${guardBadge[guard.verdict] || "dim"}`} onClick={() => setExpanded(expanded === d.id ? null : d.id)}>
+                          {guard.verdict} {expanded === d.id ? <Icon.chevronDown /> : <Icon.chevronRight />}
+                        </button>
+                      ) : <span className="dim3">—</span>}</td>
                       <td className="dim">{fmtAgo(d.created_at)}</td>
                     </tr>
-                    {expanded === d.id && guard && <tr><td colSpan={4} style={{ background: "var(--bg-2)" }}><GuardReportView report={guard} /></td></tr>}
+                    {expanded === d.id && guard && <tr><td colSpan={4} style={{ background: "var(--bg-elev)", padding: "16px" }}><GuardReportView report={guard} /></td></tr>}
                   </Fragment>
                 );
               })}
@@ -199,13 +204,22 @@ function Backups({ site, run }: { site: Site; run: RunFn }) {
   const badge: Record<string, string> = { pending: "dim", passed: "good", failed: "bad" };
   return (
     <>
-      <div className="grid cols-3 mb">
-        <div className="card"><h3>Last backup</h3><div className="stat-sm">{latest ? fmtAgo(latest.created_at) : "never"}</div></div>
-        <div className="card"><h3>Last restore test</h3><div className="stat-sm">{latest?.verify_status === "passed" ? "✓ Passed" : latest?.verify_status === "failed" ? "✗ Failed" : "—"}</div></div>
-        <div className="card"><h3>Recovery estimate</h3><div className="stat-sm">{latest?.restore_estimate_ms ? fmtDuration(latest.restore_estimate_ms) : "—"}</div></div>
+      <div className="grid cols-3 mb stagger">
+        <div className="card">
+          <div className="card-head"><span className="card-ico"><Icon.clock /></span><h3 style={{ margin: 0 }}>Last backup</h3></div>
+          <div className="stat-sm">{latest ? fmtAgo(latest.created_at) : "never"}</div>
+        </div>
+        <div className="card">
+          <div className="card-head"><span className={`card-ico ${latest?.verify_status === "passed" ? "good" : latest?.verify_status === "failed" ? "bad" : "dim"}`}><Icon.check /></span><h3 style={{ margin: 0 }}>Last restore test</h3></div>
+          <div className="stat-sm">{latest?.verify_status === "passed" ? "Passed" : latest?.verify_status === "failed" ? "Failed" : "—"}</div>
+        </div>
+        <div className="card">
+          <div className="card-head"><span className="card-ico"><Icon.history /></span><h3 style={{ margin: 0 }}>Recovery estimate</h3></div>
+          <div className="stat-sm">{latest?.restore_estimate_ms ? fmtDuration(latest.restore_estimate_ms) : "—"}</div>
+        </div>
       </div>
       <button onClick={() => run(() => api.post(`/api/sites/${site.id}/backups`), "Backup started")}>Back up now</button>
-      {backups && backups.length > 0 && (
+      {!backups ? <div className="mt"><Skeleton /></div> : backups.length > 0 && (
         <div className="table-wrap mt">
           <table>
             <thead><tr><th>Snapshot</th><th>Size</th><th>Restore test</th><th>Created</th><th></th></tr></thead>
@@ -236,8 +250,8 @@ function PHPTab({ site, onChange }: { site: Site; onChange: () => void }) {
   const [exec, setExec] = useState(site.config.php.max_execution_seconds || 120);
   return (
     <div className="card">
-      <h3>PHP settings</h3>
-      <p className="dim" style={{ fontSize: 13, marginTop: 0 }}>Curated per-site limits. OPcache and worker counts are sized automatically.</p>
+      <div className="card-head"><span className="card-ico"><Icon.code /></span><h3 style={{ margin: 0 }}>PHP settings</h3></div>
+      <p className="note">Curated per-site limits. OPcache and worker counts are sized automatically.</p>
       <div className="field-grid mt">
         <div>
           <label>PHP version</label>
@@ -271,8 +285,8 @@ function SFTPTab({ site, onChange }: { site: Site; onChange: () => void }) {
   const [info, setInfo] = useState<{ host: string; username: string; port: number } | null>(null);
   return (
     <div className="card">
-      <h3>SFTP access</h3>
-      <p className="dim" style={{ fontSize: 13, marginTop: 0 }}>A chrooted SFTP account jailed to this site only — no shell, no access to other sites. Connect with FileZilla, Cyberduck, or VS Code.</p>
+      <div className="card-head"><span className="card-ico"><Icon.key /></span><h3 style={{ margin: 0 }}>SFTP access</h3></div>
+      <p className="note">A chrooted SFTP account jailed to this site only — no shell, no access to other sites. Connect with FileZilla, Cyberduck, or VS Code.</p>
       <div className="field-grid mt" style={{ alignItems: "end" }}>
         <div>
           <label>SFTP password <span className="hint">12+ characters</span></label>
@@ -286,9 +300,9 @@ function SFTPTab({ site, onChange }: { site: Site; onChange: () => void }) {
       {(site.config.sftp_enabled || info) && (
         <div className="info-box mt">
           <div className="kv">
-            <dt>Host</dt><dd className="mono">{info ? info.host.split(":")[0] : site.domain}</dd>
+            <dt>Host</dt><dd className="mono">{info ? info.host.split(":")[0] : site.domain}<CopyButton value={info ? info.host.split(":")[0] : site.domain} /></dd>
             <dt>Port</dt><dd className="mono">{info?.port || 22}</dd>
-            <dt>Username</dt><dd className="mono">{info?.username || site.system_user || `slip-site-${site.id}`}</dd>
+            <dt>Username</dt><dd className="mono">{info?.username || site.system_user || `slip-site-${site.id}`}<CopyButton value={info?.username || site.system_user || `slip-site-${site.id}`} /></dd>
           </div>
         </div>
       )}
@@ -312,9 +326,15 @@ function LogsTab({ site }: { site: Site }) {
         {[["access", "Access"], ["error", "Error"], ["php", "PHP errors"]].map(([v, l]) => (
           <button key={v} className={source === v ? "" : "ghost"} onClick={() => setSource(v)}>{l}</button>
         ))}
-        <button className="ghost small" onClick={load}>↻ Refresh</button>
       </div>
-      <pre className="log">{content}</pre>
+      <div className="log-window">
+        <div className="log-window-head">
+          <span className="dots"><span /><span /><span /></span>
+          <span className="path">{site.domain} · {source}.log</span>
+          <button className="icon-btn" title="Refresh" onClick={load}><Icon.refresh /></button>
+        </div>
+        <pre className="log">{content}</pre>
+      </div>
     </>
   );
 }

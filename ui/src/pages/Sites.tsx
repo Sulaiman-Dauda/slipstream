@@ -9,8 +9,8 @@ const typeLabels: Record<SiteType, string> = {
   wordpress: "WordPress", woocommerce: "WooCommerce", static: "Static",
   php: "PHP", laravel: "Laravel", proxy: "Reverse proxy",
 };
-const typeIcon: Record<SiteType, string> = {
-  wordpress: "◆", woocommerce: "🛒", static: "▤", php: "⌘", laravel: "▲", proxy: "⇄",
+const typeIcon: Record<SiteType, keyof typeof Icon> = {
+  wordpress: "wordpress", woocommerce: "cart", static: "layers", php: "code", laravel: "triangle", proxy: "swap",
 };
 
 // orderSites lays production sites out with their staging environment
@@ -55,41 +55,47 @@ export default function Sites() {
       </div>
 
       {error ? (
-        <div className="error-box">{error}</div>
+        <div className="error-box"><Icon.warning /> {error}</div>
       ) : sites === null ? (
-        <div className="empty"><span className="spinner" /></div>
+        <div className="site-list">
+          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton skeleton-row" />)}
+        </div>
       ) : sites.length === 0 ? (
         <div className="card empty">
-          <div className="big">◫</div>
+          <div className="big"><Icon.sites /></div>
           <div className="title">No sites yet</div>
           <p>Launch a production-ready WordPress site in one click.</p>
           <button onClick={() => setCreating(true)} style={{ marginTop: 14 }}><Icon.plus /> Create your first site</button>
         </div>
       ) : (
-        <div className="site-list">
-          {orderSites(sites).map(({ site: s, isStaging, hasStaging }) => (
-            <Link
-              className={"site-row" + (isStaging ? " is-staging" : "") + (hasStaging ? " has-staging" : "")}
-              to={`/sites/${s.id}`} key={s.id}
-            >
-              <span className="favicon">{typeIcon[s.type]}</span>
-              <div className="rowmain">
-                <div className="domain">
-                  <span>{s.domain}</span>
-                  {isStaging && <span className="badge staging plain">staging</span>}
+        <div className="site-list stagger">
+          {orderSites(sites).map(({ site: s, isStaging, hasStaging }) => {
+            const TypeIcon = Icon[typeIcon[s.type]];
+            return (
+              <Link
+                className={"site-row" + (isStaging ? " is-staging" : "") + (hasStaging ? " has-staging" : "")}
+                to={`/sites/${s.id}`} key={s.id}
+              >
+                <span className="favicon"><TypeIcon /></span>
+                <div className="rowmain">
+                  <div className="domain">
+                    <span>{s.domain}</span>
+                    {isStaging && <span className="badge staging plain">staging</span>}
+                  </div>
+                  <div className="meta">
+                    <span>{typeLabels[s.type]}</span><span className="pip" />
+                    <span>{s.profile}</span>
+                    {s.php_version && <><span className="pip" /><span>PHP {s.php_version}</span></>}
+                    <span className="pip" /><span className="cachestate">{s.config.cache_enabled ? "Cache on" : "Cache off"}</span>
+                  </div>
                 </div>
-                <div className="meta">
-                  <span>{typeLabels[s.type]}</span><span className="pip" />
-                  <span>{s.profile}</span>
-                  {s.php_version && <><span className="pip" /><span>PHP {s.php_version}</span></>}
-                  <span className="pip" /><span className="cachestate">{s.config.cache_enabled ? "Cache on" : "Cache off"}</span>
+                <div className="rowend">
+                  <StatusBadge status={s.status} />
+                  <span className="chevron"><Icon.chevronRight /></span>
                 </div>
-              </div>
-              <div className="rowend">
-                <StatusBadge status={s.status} />
-              </div>
-            </Link>
-          ))}
+              </Link>
+            );
+          })}
         </div>
       )}
 

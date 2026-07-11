@@ -3,15 +3,17 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { DriftEvent, Site, SystemStatus } from "../types";
 import { useAction, usePoll, useToast } from "../components/ui";
+import { Icon } from "../icons";
 import TaskFeed from "../components/TaskFeed";
 
 interface ServiceInfo { name: string; active: boolean }
 
-function Meter({ label, pct }: { label: string; pct: number }) {
+function Meter({ label, icon, pct }: { label: string; icon: keyof typeof Icon; pct: number }) {
   const cls = pct < 15 ? "bad" : pct < 35 ? "warn" : "";
+  const IconCmp = Icon[icon];
   return (
     <div className="card">
-      <h3>{label}</h3>
+      <div className="card-head"><span className={`card-ico ${cls || "good"}`}><IconCmp /></span><h3 style={{ margin: 0 }}>{label}</h3></div>
       <div className="stat">{pct}<small>%</small> <small style={{ fontWeight: 400 }}>headroom</small></div>
       <div className={`meter ${cls}`}><div style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} /></div>
     </div>
@@ -55,21 +57,25 @@ export default function Dashboard() {
       </div>
 
       {toast.node}
-      {agentError && <div className="error-box">Agent unreachable: {agentError}</div>}
+      {agentError && <div className="error-box"><Icon.warning /> Agent unreachable: {agentError}</div>}
 
-      {status && (
-        <div className="grid cols-4">
-          <Meter label="CPU" pct={status.cpu_headroom_pct} />
-          <Meter label="Memory" pct={status.mem_headroom_pct} />
-          <Meter label="Disk" pct={status.disk_headroom_pct} />
+      {status ? (
+        <div className="grid cols-4 stagger">
+          <Meter label="CPU" icon="cpu" pct={status.cpu_headroom_pct} />
+          <Meter label="Memory" icon="memory" pct={status.mem_headroom_pct} />
+          <Meter label="Disk" icon="disk" pct={status.disk_headroom_pct} />
           <div className="card">
-            <h3>Overview</h3>
+            <div className="card-head"><span className="card-ico accent"><Icon.gauge /></span><h3 style={{ margin: 0 }}>Overview</h3></div>
             <div className="stat-sm">{activeSites} site{activeSites === 1 ? "" : "s"}</div>
             <div className="dim" style={{ fontSize: 13, marginTop: 6 }}>
               {status.cpu_count} cores · load {status.load1.toFixed(2)}<br />
               agent {status.agent_version}
             </div>
           </div>
+        </div>
+      ) : !agentError && (
+        <div className="grid cols-4">
+          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="card skeleton skeleton-card" />)}
         </div>
       )}
 
@@ -88,13 +94,16 @@ export default function Dashboard() {
         <>
           <h2>Configuration drift</h2>
           <p className="sub">These managed files changed outside the panel. Nothing was overwritten.</p>
-          {drift.map((d) => (
-            <div className="task-row" key={d.id} style={{ marginBottom: 8 }}>
-              <span className="mono msg">{d.path}</span>
-              <button className="small" disabled={busy} onClick={() => resolveDrift(d.id, "restore")}>Restore</button>
-              <button className="ghost small" disabled={busy} onClick={() => resolveDrift(d.id, "accept")}>Keep change</button>
-            </div>
-          ))}
+          <div className="card-list">
+            {drift.map((d) => (
+              <div className="task-row" key={d.id}>
+                <Icon.warning />
+                <span className="mono msg">{d.path}</span>
+                <button className="small" disabled={busy} onClick={() => resolveDrift(d.id, "restore")}>Restore</button>
+                <button className="ghost small" disabled={busy} onClick={() => resolveDrift(d.id, "accept")}>Keep change</button>
+              </div>
+            ))}
+          </div>
         </>
       )}
 
@@ -103,7 +112,7 @@ export default function Dashboard() {
 
       {status && drift.length === 0 && (
         <div className="mt">
-          <span className="badge good plain">✓ No configuration drift — everything matches the panel</span>
+          <span className="badge good plain"><Icon.check /> No configuration drift — everything matches the panel</span>
         </div>
       )}
     </>

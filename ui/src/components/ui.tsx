@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { Icon } from "../icons";
 
 // Toast — a lightweight global notice, driven by a window event.
 export function useToast() {
@@ -33,7 +34,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
         className={"card modal" + (wide ? " wide" : "")} onClick={(e) => e.stopPropagation()}>
         <div className="row between mb">
           <h2 style={{ margin: 0 }}>{title}</h2>
-          <button className="ghost tiny" aria-label="Close" onClick={onClose}>✕</button>
+          <button className="ghost tiny icon-only" aria-label="Close" onClick={onClose}><Icon.close /></button>
         </div>
         {children}
       </div>
@@ -97,6 +98,37 @@ export function LoadState({ data, error, onRetry }: { data: unknown; error: stri
   return null;
 }
 
+const transientStatuses = new Set(["running", "provisioning", "deleting", "guarding"]);
+
+// Skeleton renders shimmer placeholders shaped like the content that's
+// about to load, instead of a lone centered spinner.
+export function Skeleton({ kind = "rows", count = 3 }: { kind?: "rows" | "cards" | "line"; count?: number }) {
+  if (kind === "cards") {
+    return <div className="grid cols-3">{Array.from({ length: count }).map((_, i) => <div key={i} className="card skeleton skeleton-card" />)}</div>;
+  }
+  if (kind === "line") return <div className="skeleton skeleton-line" />;
+  return <div className="skeleton-rows">{Array.from({ length: count }).map((_, i) => <div key={i} className="skeleton skeleton-row" />)}</div>;
+}
+
+// CopyButton copies a value to the clipboard and briefly confirms with a
+// checkmark. Used next to mono credential values (host, user, snapshot id…).
+export function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button type="button" className="icon-btn copy-btn" title="Copy to clipboard" onClick={async () => {
+      try {
+        await navigator.clipboard.writeText(value);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      } catch {
+        /* clipboard unavailable — nothing to fall back to */
+      }
+    }}>
+      {copied ? <Icon.check /> : <Icon.copy />}
+    </button>
+  );
+}
+
 export function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     active: "good", running: "accent", provisioning: "accent", succeeded: "good",
@@ -104,5 +136,6 @@ export function StatusBadge({ status }: { status: string }) {
     error: "bad", failed: "bad", blocked: "bad", down: "bad",
     warn: "warn", pending: "dim", deleting: "warn", rolled_back: "warn", created: "dim",
   };
-  return <span className={`badge ${map[status] || "dim"}`}>{status.replace(/_/g, " ")}</span>;
+  const live = transientStatuses.has(status);
+  return <span className={`badge ${map[status] || "dim"}${live ? " live" : ""}`}>{status.replace(/_/g, " ")}</span>;
 }

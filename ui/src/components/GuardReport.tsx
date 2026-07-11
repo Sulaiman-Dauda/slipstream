@@ -1,4 +1,5 @@
 import { GuardReport, GuardSample } from "../types";
+import { Icon } from "../icons";
 
 // Visualizes a Performance Guard comparison: baseline (production) vs
 // candidate (staging), metric by metric, with the delta highlighted.
@@ -48,7 +49,7 @@ export default function GuardReportView({ report }: { report: GuardReport }) {
   return (
     <div className="card">
       <div className="row between mb">
-        <h3 style={{ margin: 0 }}>Performance Guard</h3>
+        <div className="card-head" style={{ marginBottom: 0 }}><span className={`card-ico ${verdictCls}`}><Icon.gauge /></span><h3 style={{ margin: 0 }}>Performance Guard</h3></div>
         <span className={`badge ${verdictCls}`}>{report.verdict.toUpperCase()}</span>
       </div>
 

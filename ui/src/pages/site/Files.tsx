@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, fmtBytes } from "../../api";
 import { FileEntry, Site } from "../../types";
 import { Modal, useAction, useToast } from "../../components/ui";
+import { Icon } from "../../icons";
 
 export default function Files({ site }: { site: Site }) {
   const toast = useToast();
@@ -34,14 +35,14 @@ export default function Files({ site }: { site: Site }) {
   return (
     <>
       <div className="crumb">
-        <a onClick={() => load("")} style={{ cursor: "pointer" }}>{site.domain}</a>
+        <a onClick={() => load("")} className="crumb-link">{site.domain}</a>
         {path && " / " + path}
       </div>
       <div className="table-wrap">
-        {path && <div className="filerow" onClick={up}><span className="ico">↩</span> <span className="dim">..</span></div>}
+        {path && <div className="filerow" onClick={up}><span className="ico"><Icon.arrowUp /></span> <span className="dim">..</span></div>}
         {entries.map((e) => (
           <div className="filerow" key={e.name} onClick={() => open(e)}>
-            <span className="ico">{e.is_dir ? "📁" : "📄"}</span>
+            <span className="ico">{e.is_dir ? <Icon.folder /> : <Icon.file />}</span>
             <span style={{ flex: 1 }}>{e.name}</span>
             <span className="dim3 mono" style={{ fontSize: 12 }}>{e.mode}</span>
             <span className="dim3" style={{ fontSize: 12, width: 80, textAlign: "right" }}>{e.is_dir ? "" : fmtBytes(e.size)}</span>
@@ -49,13 +50,13 @@ export default function Files({ site }: { site: Site }) {
         ))}
         {entries.length === 0 && <div className="filerow dim">Empty directory</div>}
       </div>
-      <p className="dim3" style={{ fontSize: 12, marginTop: 10 }}>
+      <p className="note tiny">
         For uploads and bulk transfers, enable SFTP in the SFTP tab and connect with any client.
       </p>
 
       {editing && (
         <Modal title={editing.path} onClose={() => setEditing(null)} wide>
-          <textarea value={editing.content} onChange={(e) => setEditing({ ...editing, content: e.target.value })} rows={20} style={{ fontSize: 12.5 }} />
+          <textarea value={editing.content} onChange={(e) => setEditing({ ...editing, content: e.target.value })} rows={20} />
           {toast.node}
           <div className="row end mt">
             <button className="ghost" onClick={() => setEditing(null)}>Cancel</button>
