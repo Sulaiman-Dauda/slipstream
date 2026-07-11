@@ -52,6 +52,7 @@ type credentials struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Token    string `json:"token,omitempty"`
+	TOTP     string `json:"totp,omitempty"`
 }
 
 // handleBootstrap tells the UI whether initial setup is still pending.
@@ -109,9 +110,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "malformed request")
 		return
 	}
-	user, err := s.Store.GetUserByEmail(strings.ToLower(c.Email))
+	email := strings.ToLower(c.Email)
+
+	// Rate limit by client IP + email to blunt credential stuffing.
+	if !s.loginLimiter.allow(clientIP(r) + "|" + email) {
+		respondErr(w, http.StatusTooManyRequests, "too many attempts — wait a minute and try again")
+		return
+	}
+
+	user, err := s.Store.GetUserByEmail(email)
 	if errors.Is(err, state.ErrNotFound) || (err == nil && !verifyPassword(c.Password, user.PasswordHash)) {
-		s.Store.Audit(c.Email, "login.failed", "panel", "")
+		s.Store.Audit(c.Email, "login.failed", "panel", clientIP(r))
 		respondErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -119,7 +128,22 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.Store.Audit(user.Email, "login.success", "panel", "")
+
+	// Second factor, if enrolled.
+	if secret, enabled, _ := s.Store.UserTOTP(user.ID); enabled {
+		if c.TOTP == "" {
+			respond(w, http.StatusUnauthorized, map[string]any{"error": "two-factor code required", "totp_required": true})
+			return
+		}
+		if !verifyTOTP(secret, c.TOTP, time.Now()) {
+			s.Store.Audit(user.Email, "login.totp_failed", "panel", clientIP(r))
+			respond(w, http.StatusUnauthorized, map[string]any{"error": "invalid two-factor code", "totp_required": true})
+			return
+		}
+	}
+
+	s.loginLimiter.reset(clientIP(r) + "|" + email)
+	s.Store.Audit(user.Email, "login.success", "panel", clientIP(r))
 	s.startSession(w, user)
 	respond(w, http.StatusOK, user)
 }

@@ -1,26 +1,22 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 
-// Auth renders either the first-boot setup form (when the panel has no
-// users yet) or the login form. Setup tokens arrive via /setup/<token> URLs
-// printed by the installer.
 export default function Auth({ onAuthed }: { onAuthed: () => void }) {
   const location = useLocation();
-  const setupToken = location.pathname.startsWith("/setup/")
-    ? location.pathname.slice("/setup/".length)
-    : "";
+  const setupToken = location.pathname.startsWith("/setup/") ? location.pathname.slice("/setup/".length) : "";
 
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState(setupToken);
+  const [totp, setTotp] = useState("");
+  const [totpRequired, setTotpRequired] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api
-      .get<{ setup_complete: boolean }>("/api/bootstrap")
+    api.get<{ setup_complete: boolean }>("/api/bootstrap")
       .then((b) => setNeedsSetup(!b.setup_complete))
       .catch(() => setNeedsSetup(false));
   }, []);
@@ -35,11 +31,16 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
       if (needsSetup) {
         await api.post("/api/setup", { email, password, token });
       } else {
-        await api.post("/api/login", { email, password });
+        await api.post("/api/login", { email, password, totp });
       }
       onAuthed();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "request failed");
+      if (err instanceof ApiError && err.status === 401 && err.message.toLowerCase().includes("two-factor")) {
+        setTotpRequired(true);
+        setError(totp ? "Invalid two-factor code" : "");
+      } else {
+        setError(err instanceof Error ? err.message : "request failed");
+      }
     } finally {
       setBusy(false);
     }
@@ -47,39 +48,39 @@ export default function Auth({ onAuthed }: { onAuthed: () => void }) {
 
   return (
     <div className="auth-shell">
-      <form className="card auth-card" onSubmit={submit}>
-        <h1>
-          slip<span style={{ color: "var(--accent)" }}>stream</span>
-        </h1>
-        {needsSetup && (
-          <p className="dim" style={{ textAlign: "center", marginTop: -10 }}>
-            Create the administrator account to finish installation.
-          </p>
-        )}
+      <form className="card auth-card pad-lg" onSubmit={submit}>
+        <div className="logo"><span className="dot" /> slipstream</div>
+        {needsSetup && <p className="dim" style={{ textAlign: "center", marginTop: -8 }}>Create the administrator account to finish installation.</p>}
+        {!needsSetup && !totpRequired && <p className="dim" style={{ textAlign: "center", marginTop: -8 }}>Sign in to your control panel.</p>}
+
         {needsSetup && (
           <>
             <label>Setup token</label>
-            <input
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="from the install output"
-              required
-            />
+            <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="from the install output" required />
           </>
         )}
-        <label>Email</label>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <label>Password</label>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          minLength={needsSetup ? 12 : 1}
-          required
-        />
+
+        {!totpRequired && (
+          <>
+            <label>Email</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+            <label>Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={needsSetup ? 12 : 1} required />
+          </>
+        )}
+
+        {totpRequired && (
+          <>
+            <p className="dim" style={{ textAlign: "center" }}>Enter the 6-digit code from your authenticator app.</p>
+            <label>Two-factor code</label>
+            <input value={totp} onChange={(e) => setTotp(e.target.value)} inputMode="numeric" maxLength={6}
+              placeholder="000000" autoFocus style={{ textAlign: "center", letterSpacing: "0.3em", fontSize: 20 }} />
+          </>
+        )}
+
         {error && <div className="error-box">{error}</div>}
         <button style={{ width: "100%", marginTop: 20 }} disabled={busy}>
-          {needsSetup ? "Create account" : "Sign in"}
+          {busy ? "…" : needsSetup ? "Create account" : totpRequired ? "Verify" : "Sign in"}
         </button>
       </form>
     </div>

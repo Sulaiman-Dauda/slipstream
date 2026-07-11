@@ -4,9 +4,11 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +32,7 @@ func main() {
 	statePath := env("SLIPSTREAM_STATE", "/var/lib/slipstream/state.db")
 	socket := env("SLIPSTREAM_AGENT_SOCKET", "/run/slipstream/agent.sock")
 	tokenFile := env("SLIPSTREAM_AGENT_TOKEN_FILE", "/etc/slipstream/agent.token")
-	listen := env("SLIPSTREAM_LISTEN", ":8443")
+	listen := env("SLIPSTREAM_LISTEN", ":5252")
 	localListen := env("SLIPSTREAM_LOCAL_LISTEN", "127.0.0.1:9080")
 	tlsCert := env("SLIPSTREAM_TLS_CERT", "/etc/slipstream/certs/panel.pem")
 	tlsKey := env("SLIPSTREAM_TLS_KEY", "/etc/slipstream/certs/panel.key")
@@ -51,6 +53,12 @@ func main() {
 	agentClient := rpc.NewClient(socket, strings.TrimSpace(string(tokenBytes)))
 	defer agentClient.Close()
 
+	panelPort := 5252
+	if p := env("SLIPSTREAM_PANEL_PORT", ""); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			panelPort = n
+		}
+	}
 	server := &api.Server{
 		Store:           store,
 		Agent:           agentClient,
@@ -58,7 +66,10 @@ func main() {
 		UI:              ui.FS(),
 		InsecureCookies: dev,
 		DefaultPHP:      env("SLIPSTREAM_PHP_VERSION", "8.4"),
+		PanelPort:       panelPort,
 	}
+	server.Init()
+	server.StartScheduler(context.Background())
 
 	// First boot: mint the one-time setup URL.
 	if n, err := store.CountUsers(); err == nil && n == 0 {

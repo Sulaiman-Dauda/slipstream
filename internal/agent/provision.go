@@ -18,6 +18,7 @@ import (
 
 var systemUserRe = regexp.MustCompile(`^slip-site-[0-9]+$`)
 var phpVersionRe = regexp.MustCompile(`^8\.[0-9]$`)
+var adminerTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
 
 func validateSite(site state.Site) error {
 	if err := nginx.ValidateDomain(site.Domain); err != nil {

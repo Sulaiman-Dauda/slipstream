@@ -66,3 +66,16 @@ export function fmtAgo(iso: string): string {
   if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
   return `${Math.floor(sec / 86400)}d ago`;
 }
+
+export function toggleTheme() {
+  const root = document.documentElement;
+  const current = root.getAttribute("data-theme");
+  const next = current === "light" ? "dark" : "light";
+  root.setAttribute("data-theme", next);
+  localStorage.setItem("slipstream-theme", next);
+}
+
+export function initTheme() {
+  const saved = localStorage.getItem("slipstream-theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+}

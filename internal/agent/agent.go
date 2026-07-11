@@ -104,6 +104,27 @@ func (a *Agent) RegisterAll(s *rpc.Server) {
 		return nil, a.reloadNginx()
 	})
 	s.Handle(rpc.MethodCheckDrift, typed(a.CheckDrift))
+
+	// v1.1 / v1.2
+	s.Handle(rpc.MethodRestartService, typed(a.RestartService))
+	s.Handle(rpc.MethodServiceStatus, func(json.RawMessage) (any, error) { return a.ServiceStatus() })
+	s.Handle(rpc.MethodTailLog, typed(a.TailLog))
+	s.Handle(rpc.MethodWriteCrontab, typed(a.WriteCrontab))
+	s.Handle(rpc.MethodFirewallStatus, func(json.RawMessage) (any, error) { return a.FirewallStatus() })
+	s.Handle(rpc.MethodFirewallRule, typed(a.FirewallRule))
+	s.Handle(rpc.MethodDBQuery, typed(a.DBQuery))
+	s.Handle(rpc.MethodDBExport, typed(a.DBExport))
+	s.Handle(rpc.MethodLaunchAdminer, typed(a.LaunchAdminer))
+	s.Handle(rpc.MethodListFiles, typed(a.ListFiles))
+	s.Handle(rpc.MethodReadFile, typed(a.ReadFile))
+	s.Handle(rpc.MethodWriteFile, typed(a.WriteFile))
+	s.Handle(rpc.MethodSetSFTP, typed(a.SetSFTP))
+	s.Handle(rpc.MethodWPMagicLogin, typed(a.WPMagicLogin))
+	s.Handle(rpc.MethodWPPlugins, typed(a.WPPlugins))
+	s.Handle(rpc.MethodWPUpdate, typed(a.WPUpdate))
+	s.Handle(rpc.MethodWPObjectCache, typed(a.WPObjectCache))
+	s.Handle(rpc.MethodPanelCert, typed(a.PanelCertificate))
+	s.Handle(rpc.MethodSelfUpdate, typed(a.SelfUpdate))
 }
 
 // typed adapts a strongly-typed handler to the raw RPC signature.
