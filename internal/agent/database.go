@@ -47,10 +47,18 @@ func (a *Agent) tuneMariaDBIfNeeded(ctx context.Context) {
 var dbIdentRe = regexp.MustCompile(`^[a-z][a-z0-9_]{2,31}$`)
 
 // mysqlExec runs a statement as the local root MariaDB account (unix-socket
-// auth). Identifiers are validated; values are passed as quoted literals
-// with all quotes stripped by validation.
+// auth). Identifiers are validated; values are quoted literals with quote
+// characters rejected by validation.
 func (a *Agent) mysqlExec(ctx context.Context, stmt string) error {
 	_, err := a.Runner.Run(ctx, "mariadb", "--protocol=socket", "-e", stmt)
+	return err
+}
+
+// mysqlExecStdin runs SQL fed on stdin instead of argv, so any embedded
+// secret (a new user's password) never appears in /proc/<pid>/cmdline where
+// a co-hosted tenant could read it.
+func (a *Agent) mysqlExecStdin(ctx context.Context, sql string) error {
+	_, err := a.Runner.RunStdin(ctx, sql, "mariadb", "--protocol=socket")
 	return err
 }
 
@@ -76,16 +84,14 @@ func (a *Agent) CreateDatabase(p rpc.DatabaseParams) (map[string]string, error) 
 	}
 	// Tune MariaDB for this machine on first database creation.
 	a.tuneMariaDBIfNeeded(ctx)
-	stmts := []string{
-		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", p.Name),
-		fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s' WITH MAX_USER_CONNECTIONS %d;", p.User, p.Password, maxConns),
-		fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';", p.Name, p.User),
-		"FLUSH PRIVILEGES;",
-	}
-	for _, s := range stmts {
-		if err := a.mysqlExec(ctx, s); err != nil {
-			return nil, fmt.Errorf("create database: %w", err)
-		}
+	// The password appears only in this SQL, fed on stdin — never in argv.
+	sql := fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"+
+			"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s' WITH MAX_USER_CONNECTIONS %d;\n"+
+			"GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';\nFLUSH PRIVILEGES;\n",
+		p.Name, p.User, p.Password, maxConns, p.Name, p.User)
+	if err := a.mysqlExecStdin(ctx, sql); err != nil {
+		return nil, fmt.Errorf("create database: %w", err)
 	}
 	return map[string]string{"database": p.Name, "user": p.User}, nil
 }

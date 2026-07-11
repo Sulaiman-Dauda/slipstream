@@ -65,7 +65,11 @@ export default function App() {
   if (!me) return <Auth onAuthed={refresh} />;
 
   const logout = async () => {
-    await api.post("/api/logout");
+    try {
+      await api.post("/api/logout");
+    } catch {
+      /* clear local state regardless */
+    }
     setMe(null);
     navigate("/");
   };
@@ -91,7 +95,7 @@ export default function App() {
         <div className="spacer" />
         <div className="sidebar-foot">
           <div className="sidebar-user">
-            <span className="avatar">{me.email[0].toUpperCase()}</span>
+            <span className="avatar">{(me.email[0] || "?").toUpperCase()}</span>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 12.5, fontWeight: 550, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me.email}</div>
               <div className="dim3" style={{ fontSize: 11 }}>{me.role}{me.totp_enabled ? " · 2FA on" : ""}</div>

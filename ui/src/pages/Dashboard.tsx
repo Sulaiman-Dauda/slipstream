@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { DriftEvent, Site, SystemStatus } from "../types";
-import { usePoll } from "../components/ui";
+import { useAction, usePoll, useToast } from "../components/ui";
 import TaskFeed from "../components/TaskFeed";
 
 interface ServiceInfo { name: string; active: boolean }
@@ -22,8 +22,10 @@ export default function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [drift, setDrift] = useState<DriftEvent[]>([]);
   const [agentError, setAgentError] = useState("");
-  const [services] = usePoll<ServiceInfo[]>("/api/services", 15000);
-  const [sites] = usePoll<Site[]>("/api/sites", 15000);
+  const { data: services } = usePoll<ServiceInfo[]>("/api/services", 15000);
+  const { data: sites } = usePoll<Site[]>("/api/sites", 15000);
+  const toast = useToast();
+  const { run, busy } = useAction(toast);
 
   const load = useCallback(() => {
     api.get<SystemStatus>("/api/system/status").then((s) => { setStatus(s); setAgentError(""); })
@@ -37,10 +39,8 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, [load]);
 
-  const resolveDrift = async (id: number, action: "restore" | "accept") => {
-    await api.post(`/api/system/drift/${id}/resolve`, { action });
-    load();
-  };
+  const resolveDrift = (id: number, action: "restore" | "accept") =>
+    run(() => api.post(`/api/system/drift/${id}/resolve`, { action }), action === "restore" ? "Managed config restored" : "Change accepted").then(load);
 
   const activeSites = (sites || []).filter((s) => !s.staging_of).length;
 
@@ -54,6 +54,7 @@ export default function Dashboard() {
         <Link className="btn" to="/sites">Manage sites →</Link>
       </div>
 
+      {toast.node}
       {agentError && <div className="error-box">Agent unreachable: {agentError}</div>}
 
       {status && (
@@ -90,8 +91,8 @@ export default function Dashboard() {
           {drift.map((d) => (
             <div className="task-row" key={d.id} style={{ marginBottom: 8 }}>
               <span className="mono msg">{d.path}</span>
-              <button className="small" onClick={() => resolveDrift(d.id, "restore")}>Restore</button>
-              <button className="ghost small" onClick={() => resolveDrift(d.id, "accept")}>Keep change</button>
+              <button className="small" disabled={busy} onClick={() => resolveDrift(d.id, "restore")}>Restore</button>
+              <button className="ghost small" disabled={busy} onClick={() => resolveDrift(d.id, "accept")}>Keep change</button>
             </div>
           ))}
         </>

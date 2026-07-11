@@ -91,22 +91,18 @@ func (s *Store) CreateSetupToken(token string, ttl time.Duration) error {
 	return err
 }
 
-// ConsumeSetupToken validates and burns a setup token. It returns ErrNotFound
+// ConsumeSetupToken atomically validates and burns a setup token in a single
+// UPDATE so two concurrent callers cannot both succeed. Returns ErrNotFound
 // for unknown, expired, or already-used tokens.
 func (s *Store) ConsumeSetupToken(token string) error {
-	var expires string
-	var used int
-	err := s.db.QueryRow(`SELECT expires_at, used FROM setup_tokens WHERE token_hash=?`, hashToken(token)).
-		Scan(&expires, &used)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
+	res, err := s.db.Exec(`UPDATE setup_tokens SET used=1 WHERE token_hash=? AND used=0 AND expires_at > ?`,
+		hashToken(token), time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return err
 	}
-	if used != 0 || parseTime(expires).Before(time.Now().UTC()) {
+	n, _ := res.RowsAffected()
+	if n == 0 {
 		return ErrNotFound
 	}
-	_, err = s.db.Exec(`UPDATE setup_tokens SET used=1 WHERE token_hash=?`, hashToken(token))
-	return err
+	return nil
 }

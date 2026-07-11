@@ -18,6 +18,7 @@ import (
 // operations behave; everything else is a no-op with canned output.
 type mockRunner struct {
 	calls   [][]string
+	stdins  []string
 	fail    map[string]error
 	outputs map[string]string
 }
@@ -35,6 +36,11 @@ func (m *mockRunner) Run(ctx context.Context, name string, args ...string) (stri
 		return out, nil
 	}
 	return "", nil
+}
+
+func (m *mockRunner) RunStdin(ctx context.Context, stdin, name string, args ...string) (string, error) {
+	m.stdins = append(m.stdins, stdin)
+	return m.Run(ctx, name, args...)
 }
 
 func (m *mockRunner) called(name string, wantArgs ...string) bool {
@@ -266,8 +272,21 @@ func TestDatabaseIdentifierValidation(t *testing.T) {
 	if _, err := a.CreateDatabase(rpc.DatabaseParams{Name: "site_db", User: "site_user", Password: strings.Repeat("s", 24)}); err != nil {
 		t.Fatalf("valid database creation failed: %v", err)
 	}
-	if !run.called("mariadb", "CREATE DATABASE IF NOT EXISTS `site_db`") {
-		t.Error("expected CREATE DATABASE statement")
+	// The SQL (with password) is fed on stdin, never argv — verify the
+	// statement went through stdin and the password is NOT in any argv.
+	foundSQL := false
+	for _, s := range run.stdins {
+		if strings.Contains(s, "CREATE DATABASE IF NOT EXISTS `site_db`") && strings.Contains(s, "IDENTIFIED BY 'ssssssssssssssssssssssss'") {
+			foundSQL = true
+		}
+	}
+	if !foundSQL {
+		t.Error("expected CREATE DATABASE statement on stdin")
+	}
+	for _, c := range run.calls {
+		if strings.Contains(strings.Join(c, " "), "ssssssssssssssssssssssss") {
+			t.Error("password leaked into argv")
+		}
 	}
 }
 

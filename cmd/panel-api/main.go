@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/api"
@@ -80,25 +82,40 @@ func main() {
 
 	handler := server.Routes()
 
-	// Local plaintext listener for the WordPress connector.
+	// Local plaintext listener for the WordPress connector (loopback only).
+	localSrv := &http.Server{Addr: localListen, Handler: handler}
 	go func() {
 		logger.Info("connector listener", "addr", localListen)
-		if err := http.ListenAndServe(localListen, handler); err != nil {
+		if err := localSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("local listener failed", "err", err)
+		}
+	}()
+
+	mainSrv := &http.Server{Addr: listen, Handler: handler}
+	go func() {
+		var serveErr error
+		logger.Info("panel-api listening", "addr", listen, "version", version.Version, "dev", dev)
+		if dev {
+			serveErr = mainSrv.ListenAndServe()
+		} else {
+			serveErr = mainSrv.ListenAndServeTLS(tlsCert, tlsKey)
+		}
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			logger.Error("server failed", "err", serveErr)
 			os.Exit(1)
 		}
 	}()
 
-	logger.Info("panel-api listening", "addr", listen, "version", version.Version, "dev", dev)
-	if dev {
-		err = http.ListenAndServe(listen, handler)
-	} else {
-		err = http.ListenAndServeTLS(listen, tlsCert, tlsKey, handler)
-	}
-	if err != nil {
-		logger.Error("server failed", "err", err)
-		os.Exit(1)
-	}
+	// Graceful shutdown: finish in-flight requests before exiting so a
+	// restart or self-update never cuts off a running operation mid-write.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+	logger.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	mainSrv.Shutdown(shutdownCtx)
+	localSrv.Shutdown(shutdownCtx)
 }
 
 func portOf(listen string) string {

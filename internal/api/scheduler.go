@@ -71,6 +71,8 @@ func (s *Server) runScheduledBackups() {
 		if time.Since(last) < dueInterval(site.Config.Backups.Schedule) {
 			continue
 		}
+		// Reserve the slot before starting so the next 5-minute tick does not
+		// launch a second backup while this one is still running.
 		s.Store.MarkScheduleRun(key)
 		site := site
 		s.runTask("backup.scheduled", site.ID, func(progress func(int, string)) error {
@@ -79,6 +81,9 @@ func (s *Server) runScheduledBackups() {
 			if err := s.Agent.Call(rpc.MethodRunBackup, rpc.BackupParams{
 				Site: site, Repository: repo, Password: password, Kind: "full",
 			}, &res); err != nil {
+				// Clear the slot so it retries next tick instead of waiting a
+				// full interval after a failure.
+				s.Store.ClearScheduleRun(key)
 				return err
 			}
 			s.Store.CreateBackup(state.Backup{

@@ -246,23 +246,60 @@ func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 	s.Store.UpdateSite(site)
 	s.Store.Audit(s.actor(r), "site.delete", site.Domain, "")
 
+	// Deleting a production site also removes its staging environment, which
+	// would otherwise dangle (staging_of pointing at a gone site) along with
+	// its on-disk data and secrets.
+	var staging *state.Site
+	if site.StagingOf == 0 {
+		if stg, err := s.Store.StagingSiteFor(site.ID); err == nil {
+			staging = &stg
+		}
+	}
+
 	task, err := s.runTask("site.delete", site.ID, func(progress func(int, string)) error {
-		progress(20, "Removing "+site.Domain)
-		if err := s.Agent.Call(rpc.MethodDeleteSite, rpc.SiteRef{Site: site}, nil); err != nil {
-			s.markSiteError(site.ID)
-			return err
+		removeOne := func(target state.Site) {
+			s.Agent.Call(rpc.MethodDeleteSite, rpc.SiteRef{Site: target}, nil)
+			for path := range managedFilesForSite(s, target) {
+				s.Store.RemoveManagedFile(path)
+			}
+			s.Store.SetSetting(secretKey(target.ID, "db_password"), "")
+			s.Store.SetSetting(secretKey(target.ID, "connector_token"), "")
+			s.Store.DeleteSite(target.ID)
 		}
-		progress(80, "Cleaning panel state")
-		for path := range managedFilesForSite(s, site) {
-			s.Store.RemoveManagedFile(path)
+		if staging != nil {
+			progress(15, "Removing staging environment "+staging.Domain)
+			removeOne(*staging)
 		}
-		return s.Store.DeleteSite(site.ID)
+		progress(50, "Removing "+site.Domain)
+		removeOne(site)
+		progress(100, "Removed")
+		return nil
 	})
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	respond(w, http.StatusAccepted, map[string]any{"task": task})
+}
+
+// siteOwnsPath reports whether a managed file belongs to a site, using exact
+// filename/prefix matching (NOT substrings — "slip-site-1" must not match
+// "slip-site-10.conf", nor "example.com" match "dev.example.com.conf").
+func siteOwnsPath(site state.Site, path string) bool {
+	base := filepath.Base(path)
+	switch base {
+	case site.Domain + ".conf":
+		return true
+	case fmt.Sprintf("slipstream-cache-%d.conf", site.ID):
+		return true
+	}
+	if site.SystemUser != "" && base == site.SystemUser+".conf" {
+		return true
+	}
+	if site.RootPath != "" && strings.HasPrefix(path, site.RootPath+"/") {
+		return true
+	}
+	return false
 }
 
 // managedFilesForSite matches recorded managed files belonging to a site.
@@ -272,12 +309,8 @@ func managedFilesForSite(s *Server, site state.Site) map[string]string {
 		return nil
 	}
 	out := map[string]string{}
-	needleDomain := site.Domain
-	needleID := fmt.Sprintf("-%d.conf", site.ID)
-	needleUser := site.SystemUser
 	for p, h := range all {
-		if strings.Contains(p, needleDomain) || strings.HasSuffix(p, needleID) ||
-			(needleUser != "" && strings.Contains(p, needleUser)) {
+		if siteOwnsPath(site, p) {
 			out[p] = h
 		}
 	}

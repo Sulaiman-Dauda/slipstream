@@ -5,7 +5,7 @@ import { useAction, usePoll, useToast } from "../components/ui";
 interface FWStatus { enabled: boolean; rules: string[] }
 
 export default function Firewall() {
-  const [status, reload] = usePoll<FWStatus>("/api/firewall", 0);
+  const { data: status, reload } = usePoll<FWStatus>("/api/firewall", 0);
   const toast = useToast();
   const { run, busy } = useAction(toast);
   const [port, setPort] = useState("");

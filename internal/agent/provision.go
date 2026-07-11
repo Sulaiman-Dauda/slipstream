@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/slipstream-panel/slipstream/internal/engine"
 	"github.com/slipstream-panel/slipstream/internal/engine/nginx"
@@ -121,6 +122,7 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 		}
 		poolPath, poolContent, err := phpfpm.RenderPool(site, siteMem)
 		if err != nil {
+			rollback()
 			return nil, err
 		}
 		// Tests re-root pool files under a temp dir via PHPPoolRoot.
@@ -173,6 +175,24 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 	if site.RootPath == "" {
 		site.RootPath = filepath.Join(a.Paths.SitesRoot, site.Domain)
 	}
+
+	// Any failure before the site is fully provisioned tears down the
+	// half-created user, database and directory tree — otherwise a retry
+	// dies at useradd ("user exists") and the site can never be recreated.
+	provisioned := false
+	defer func() {
+		if provisioned {
+			return
+		}
+		a.Log.Warn("provisioning failed, rolling back", "site", site.Domain)
+		if site.Config.Database.Enabled && !site.Config.Database.External {
+			a.DropDatabase(rpc.DatabaseParams{Name: site.Config.Database.Name, User: site.Config.Database.User})
+		}
+		if strings.HasPrefix(site.RootPath, a.Paths.SitesRoot+"/") {
+			os.RemoveAll(site.RootPath)
+		}
+		a.Runner.Run(ctx, "userdel", site.SystemUser)
+	}()
 
 	// 1. Isolated Unix identity.
 	if _, err := a.Runner.Run(ctx, "useradd", "--system", "--no-create-home",
@@ -266,6 +286,7 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		return result, err
 	}
 	result.Files = files
+	provisioned = true
 	return result, nil
 }
 
@@ -275,12 +296,19 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 		_, err := a.Runner.Run(ctx, "runuser", argv...)
 		return err
 	}
+	// runPrompt feeds a secret to wp-cli via stdin (--prompt=<param>) so the
+	// password never lands in argv / /proc/<pid>/cmdline.
+	runPrompt := func(secret string, args ...string) error {
+		argv := append([]string{"-u", site.SystemUser, "--", "wp", "--path=" + dir}, args...)
+		_, err := a.Runner.RunStdin(ctx, secret+"\n", "runuser", argv...)
+		return err
+	}
 	if err := run("core", "download", "--locale=en_US"); err != nil {
 		return fmt.Errorf("wp core download: %w", err)
 	}
 	db := site.Config.Database
-	if err := run("config", "create",
-		"--dbname="+db.Name, "--dbuser="+db.User, "--dbpass="+p.DBPassword,
+	if err := runPrompt(p.DBPassword, "config", "create",
+		"--dbname="+db.Name, "--dbuser="+db.User, "--prompt=dbpass",
 		"--dbhost="+fmt.Sprintf("%s:%d", db.Host, db.Port), "--skip-check"); err != nil {
 		return fmt.Errorf("wp config create: %w", err)
 	}
@@ -296,9 +324,9 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 	if title == "" {
 		title = site.Domain
 	}
-	if err := run("core", "install",
+	if err := runPrompt(p.AdminPassword, "core", "install",
 		"--url=https://"+site.Domain, "--title="+title,
-		"--admin_user="+p.AdminUser, "--admin_password="+p.AdminPassword,
+		"--admin_user="+p.AdminUser, "--prompt=admin_password",
 		"--admin_email="+p.AdminEmail, "--skip-email"); err != nil {
 		return fmt.Errorf("wp core install: %w", err)
 	}

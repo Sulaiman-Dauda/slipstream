@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -54,15 +55,27 @@ func (a *Agent) DBExport(p rpc.DBExportParams) (rpc.DBExportResult, error) {
 	}
 	name := fmt.Sprintf("%s-%s.sql", p.Database, time.Now().UTC().Format("20060102-150405"))
 	dest := filepath.Join(dir, name)
-	out, err := a.Runner.Run(context.Background(), "mariadb-dump", "--protocol=socket", "--single-transaction", p.Database)
+	// Stream the dump straight to disk — a multi-GB database must not be
+	// buffered (twice) in the agent's memory.
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
 	if err != nil {
 		return rpc.DBExportResult{}, err
 	}
-	if err := os.WriteFile(dest, []byte(out), 0o640); err != nil {
+	cmd := exec.CommandContext(context.Background(), "mariadb-dump", "--protocol=socket", "--single-transaction", p.Database)
+	cmd.Stdout = f
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		f.Close()
+		os.Remove(dest)
+		return rpc.DBExportResult{}, fmt.Errorf("mariadb-dump: %w: %s", err, strings.TrimSpace(errBuf.String()))
+	}
+	f.Close()
+	a.Runner.Run(context.Background(), "chown", p.Site.SystemUser+":"+p.Site.SystemUser, dest)
+	fi, err := os.Stat(dest)
+	if err != nil {
 		return rpc.DBExportResult{}, err
 	}
-	a.Runner.Run(context.Background(), "chown", p.Site.SystemUser+":"+p.Site.SystemUser, dest)
-	fi, _ := os.Stat(dest)
 	return rpc.DBExportResult{Path: dest, SizeBytes: fi.Size()}, nil
 }
 

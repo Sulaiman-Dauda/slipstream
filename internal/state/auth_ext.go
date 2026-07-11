@@ -140,3 +140,19 @@ func (s *Store) MarkScheduleRun(key string) error {
 		ON CONFLICT(key) DO UPDATE SET last_run=excluded.last_run`, key, now())
 	return err
 }
+
+// ClearScheduleRun forgets a scheduler key so it becomes due again (used to
+// retry a failed scheduled job on the next tick).
+func (s *Store) ClearScheduleRun(key string) error {
+	_, err := s.db.Exec(`DELETE FROM schedule_state WHERE key=?`, key)
+	return err
+}
+
+// ReconcileRunningTasks marks tasks stuck in 'running'/'pending' as failed.
+// Called at startup: any task in those states was killed by a restart and
+// its goroutine is gone, so leaving it 'running' forever is misleading.
+func (s *Store) ReconcileRunningTasks() error {
+	_, err := s.db.Exec(`UPDATE tasks SET status='failed', error='interrupted by panel restart', finished_at=?
+		WHERE status IN ('running','pending')`, now())
+	return err
+}

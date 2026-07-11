@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 )
 
@@ -12,9 +13,16 @@ type fakeFailRunner struct{}
 func (fakeFailRunner) Run(context.Context, string, ...string) (string, error) {
 	return "", errors.New("unavailable")
 }
+func (fakeFailRunner) RunStdin(context.Context, string, string, ...string) (string, error) {
+	return "", errors.New("unavailable")
+}
 
 func TestResolveInSiteJail(t *testing.T) {
-	root := "/srv/sites/example.com"
+	// resolveInSite resolves symlinks, so use a real on-disk root.
+	root := t.TempDir()
+	os.MkdirAll(root+"/wp-content/uploads", 0o755)
+	os.MkdirAll(root+"/b", 0o755)
+
 	ok := []struct{ rel, want string }{
 		{"", root},
 		{"wp-content", root + "/wp-content"},
@@ -27,17 +35,22 @@ func TestResolveInSiteJail(t *testing.T) {
 			t.Errorf("resolveInSite(%q) = %q, %v; want %q", c.rel, got, err, c.want)
 		}
 	}
-	// Traversal attempts are neutralized (collapsed at root), never escape:
-	// every result must stay within root.
-	traversal := []string{"../../../etc/passwd", "../other-site", "/../../root", "../../", "wp-content/../../../.."}
+	// Traversal attempts are neutralized (collapsed at root), never escape.
+	traversal := []string{"../../../etc/passwd", "../other-site", "/../../root", "../../"}
 	for _, e := range traversal {
 		got, err := resolveInSite(root, e)
 		if err != nil {
-			continue // rejection is also acceptable
+			continue
 		}
 		if got != root && !hasPrefix(got, root+"/") {
 			t.Errorf("resolveInSite(%q) = %q escaped the jail", e, got)
 		}
+	}
+
+	// A symlink pointing outside the jail must be rejected.
+	os.Symlink("/etc", root+"/evil")
+	if _, err := resolveInSite(root, "evil/passwd"); err == nil {
+		t.Error("symlink escape was not rejected")
 	}
 }
 

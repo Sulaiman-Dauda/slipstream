@@ -41,7 +41,7 @@ function orderSites(sites: Site[]): { site: Site; isStaging: boolean; hasStaging
 }
 
 export default function Sites() {
-  const [sites] = usePoll<Site[]>("/api/sites", 8000);
+  const { data: sites, error } = usePoll<Site[]>("/api/sites", 8000);
   const [creating, setCreating] = useState(false);
 
   return (
@@ -54,7 +54,9 @@ export default function Sites() {
         <button onClick={() => setCreating(true)}><Icon.plus /> New site</button>
       </div>
 
-      {sites === null ? (
+      {error ? (
+        <div className="error-box">{error}</div>
+      ) : sites === null ? (
         <div className="empty"><span className="spinner" /></div>
       ) : sites.length === 0 ? (
         <div className="card empty">

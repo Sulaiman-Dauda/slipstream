@@ -74,4 +74,5 @@ const (
 	MethodSelfUpdate     = "SelfUpdate"
 	MethodCacheStats     = "CacheStats"
 	MethodWarmCache      = "WarmCache"
+	MethodTestBackup     = "TestBackup"
 )

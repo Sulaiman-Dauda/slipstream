@@ -15,13 +15,34 @@ import (
 
 // The file browser is deliberately jailed to a site's root. resolveInSite
 // is the security boundary: it rejects any path that escapes RootPath after
-// cleaning.
+// cleaning AND after resolving symlinks — a site user could otherwise plant
+// a symlink (e.g. wp-config.php -> /etc/shadow) inside its own docroot and
+// trick the root agent into reading or writing outside the jail.
 func resolveInSite(rootPath, rel string) (string, error) {
 	clean := filepath.Clean("/" + rel) // force absolute, collapse .. at root
 	full := filepath.Join(rootPath, clean)
 	rp := filepath.Clean(rootPath)
 	if full != rp && !strings.HasPrefix(full, rp+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path escapes site root")
+	}
+
+	// Resolve symlinks and re-check containment against the real root. For a
+	// path that does not exist yet (a new file being written), resolve its
+	// parent directory instead.
+	realRoot, err := filepath.EvalSymlinks(rp)
+	if err != nil {
+		return "", err
+	}
+	realFull, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		realParent, perr := filepath.EvalSymlinks(filepath.Dir(full))
+		if perr != nil {
+			return "", perr
+		}
+		realFull = filepath.Join(realParent, filepath.Base(full))
+	}
+	if realFull != realRoot && !strings.HasPrefix(realFull, realRoot+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path escapes site root via symlink")
 	}
 	return full, nil
 }

@@ -8,6 +8,18 @@ import (
 	"github.com/slipstream-panel/slipstream/internal/state"
 )
 
+// handleHealthz is an unauthenticated liveness probe. It confirms the API
+// is up and whether the privileged agent is reachable — enough for a load
+// balancer or uptime monitor, without leaking sensitive detail.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	agentUp := s.Agent.Call(rpc.MethodPing, nil, nil) == nil
+	status := http.StatusOK
+	if !agentUp {
+		status = http.StatusServiceUnavailable
+	}
+	respond(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[agentUp], "agent": agentUp})
+}
+
 func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	var res rpc.SystemStatusResult
 	if err := s.Agent.Call(rpc.MethodSystemStatus, nil, &res); err != nil {
@@ -105,7 +117,7 @@ func (s *Server) handleResolveDrift(w http.ResponseWriter, r *http.Request) {
 		}
 		restored := false
 		for _, site := range sites {
-			if !strings.Contains(event.Path, site.Domain) && !strings.Contains(event.Path, site.SystemUser) {
+			if !siteOwnsPath(site, event.Path) {
 				continue
 			}
 			var res rpc.ApplyResult
