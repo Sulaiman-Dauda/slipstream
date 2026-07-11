@@ -2,11 +2,15 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 	"github.com/slipstream-panel/slipstream/internal/state"
@@ -20,38 +24,40 @@ func (a *Agent) wp(ctx context.Context, site state.Site, args ...string) (string
 	return a.Runner.Run(ctx, "runuser", argv...)
 }
 
-// WPMagicLogin installs a one-time-login helper and returns a URL that logs
-// the admin straight into wp-admin. Uses the well-maintained wp-cli
-// "login" package if present; otherwise creates a short-lived auth cookie
-// via a generated magic link through a tiny mu-plugin.
+// WPMagicLogin mints a one-time login link handled by our own connector.
+// The token hash + expiry is stored in the admin's user meta via wp-cli;
+// the connector validates it with a DIRECT database read that bypasses the
+// object cache — so it works identically under APCu, Redis, or no cache
+// (APCu's CLI and FPM segments are separate, which is exactly what breaks
+// the third-party wp-cli-login plugin).
 func (a *Agent) WPMagicLogin(p rpc.WPParams) (rpc.WPLoginResult, error) {
 	if err := validateSite(p.Site); err != nil {
 		return rpc.WPLoginResult{}, err
 	}
 	ctx := context.Background()
-	// Ensure the wp-cli login command package is available (installs once).
-	if _, err := a.wp(ctx, p.Site, "login", "--help"); err != nil {
-		if _, err := a.Runner.Run(ctx, "runuser", "-u", p.Site.SystemUser, "--",
-			"wp", "--path="+filepath.Join(p.Site.RootPath, "current"),
-			"package", "install", "aaemnnosttv/wp-cli-login-command"); err != nil {
-			return rpc.WPLoginResult{}, fmt.Errorf("install login command: %w", err)
-		}
-	}
-	// Install + activate the companion mu-plugin that serves magic links.
-	if _, err := a.wp(ctx, p.Site, "login", "install", "--activate", "--yes"); err != nil {
-		return rpc.WPLoginResult{}, fmt.Errorf("activate login companion: %w", err)
-	}
 
-	// Find the admin user (lowest ID with administrator role).
-	adminUser, err := a.wp(ctx, p.Site, "user", "list", "--role=administrator", "--field=user_login", "--number=1")
-	if err != nil || strings.TrimSpace(adminUser) == "" {
+	adminID, err := a.wp(ctx, p.Site, "user", "list", "--role=administrator", "--field=ID", "--number=1")
+	if err != nil || strings.TrimSpace(adminID) == "" {
 		return rpc.WPLoginResult{}, fmt.Errorf("no administrator user found")
 	}
-	out, err := a.wp(ctx, p.Site, "login", "create", strings.TrimSpace(adminUser), "--url-only")
-	if err != nil {
-		return rpc.WPLoginResult{}, fmt.Errorf("create magic link: %w", err)
+	adminID = strings.TrimSpace(adminID)
+
+	tokenBytes := make([]byte, 24)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return rpc.WPLoginResult{}, err
 	}
-	return rpc.WPLoginResult{URL: strings.TrimSpace(out)}, nil
+	token := hex.EncodeToString(tokenBytes)
+	sum := sha256.Sum256([]byte(token))
+	hash := hex.EncodeToString(sum[:])
+	expiry := time.Now().Add(5 * time.Minute).Unix()
+
+	// Store hash:expiry on the admin. The write goes to the DB; the connector
+	// reads it directly from the DB, so no object-cache segment mismatch.
+	if _, err := a.wp(ctx, p.Site, "user", "meta", "update", adminID, "slipstream_magic",
+		fmt.Sprintf("%s:%d", hash, expiry)); err != nil {
+		return rpc.WPLoginResult{}, fmt.Errorf("store magic token: %w", err)
+	}
+	return rpc.WPLoginResult{URL: fmt.Sprintf("https://%s/?slipstream_login=%s", p.Site.Domain, token)}, nil
 }
 
 // WPPlugins lists installed plugins and themes with available updates.

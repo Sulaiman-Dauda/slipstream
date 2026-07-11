@@ -296,6 +296,7 @@ label:first-child { margin-top: 0; }
 label .hint { font-weight: 400; color: var(--text-3); font-size: 11.5px; margin-left: 2px; }
 .form-narrow { max-width: 460px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-3) var(--sp-4); }
 
 /* ---- Auth ------------------------------------------------------------------ */
 .auth-shell {
