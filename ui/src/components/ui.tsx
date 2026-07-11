@@ -31,11 +31,6 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   );
 }
 
-// A small confirm helper.
-export function confirmAction(message: string): boolean {
-  return window.confirm(message);
-}
-
 // useAsyncAction wraps an API call with busy state and toast feedback.
 export function useAction(toast: ReturnType<typeof useToast>) {
   const [busy, setBusy] = useState(false);

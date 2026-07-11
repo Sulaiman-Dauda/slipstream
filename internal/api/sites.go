@@ -463,12 +463,3 @@ func (s *Server) handleCreateStaging(w http.ResponseWriter, r *http.Request) {
 func secretKey(siteID int64, name string) string {
 	return fmt.Sprintf("site.%d.%s", siteID, name)
 }
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}

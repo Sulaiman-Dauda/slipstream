@@ -5,6 +5,7 @@ import { Backup, Deployment, GuardReport, Site } from "../types";
 import { StatusBadge, useAction, useToast, usePoll } from "../components/ui";
 import GuardReportView from "../components/GuardReport";
 import TaskFeed from "../components/TaskFeed";
+import { Icon } from "../icons";
 import Database from "./site/Database";
 import Files from "./site/Files";
 import WordPress from "./site/WordPress";
@@ -50,7 +51,7 @@ export default function SiteDetail() {
           <p className="sub">{site.type} · {site.profile} profile{site.php_version ? ` · PHP ${site.php_version}` : ""}{site.staging_of ? " · staging" : ""}</p>
         </div>
         <div className="row">
-          <a className="btn ghost" href={`https://${site.domain}`} target="_blank" rel="noreferrer">Visit ↗</a>
+          <a className="btn ghost" href={`https://${site.domain}`} target="_blank" rel="noreferrer"><Icon.external /> Visit</a>
           <button className="danger" onClick={() => { if (confirm(`Delete ${site.domain} and all its data? This cannot be undone.`)) run(() => api.del(`/api/sites/${site.id}`), "Deletion started").then(() => navigate("/sites")); }}>Delete</button>
         </div>
       </div>

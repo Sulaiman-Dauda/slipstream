@@ -72,13 +72,15 @@ export default function Dashboard() {
         </div>
       )}
 
-      <h2>Services</h2>
-      <div className="row">
+      <div className="row between" style={{ marginTop: 28, marginBottom: 12 }}>
+        <h2 style={{ margin: 0 }}>Services</h2>
+        <Link to="/services" className="dim" style={{ fontSize: 12.5 }}>Manage →</Link>
+      </div>
+      <div className="row" style={{ gap: 8 }}>
         {(services || []).map((s) => (
-          <span key={s.name} className={`badge ${s.active ? "good" : "bad"}`}>{s.name} {s.active ? "running" : "stopped"}</span>
+          <span key={s.name} className={`badge ${s.active ? "good" : "bad"}`}>{s.name}</span>
         ))}
         {(!services || services.length === 0) && <span className="dim">Loading…</span>}
-        <Link to="/services" className="dim" style={{ fontSize: 13, marginLeft: 8 }}>Manage →</Link>
       </div>
 
       {drift.length > 0 && (
