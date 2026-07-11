@@ -19,6 +19,10 @@ import (
 const sessionCookie = "slipstream_session"
 const sessionTTL = 24 * time.Hour
 
+// dummyHash is a valid argon2id hash of a random value, used to equalize
+// login timing for nonexistent accounts. Computed once at startup.
+var dummyHash = func() string { h, _ := hashPassword(randomToken(16)); return h }()
+
 // hashPassword produces an argon2id hash in a self-describing format.
 func hashPassword(password string) (string, error) {
 	salt := make([]byte, 16)
@@ -119,7 +123,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := s.Store.GetUserByEmail(email)
-	if errors.Is(err, state.ErrNotFound) || (err == nil && !verifyPassword(c.Password, user.PasswordHash)) {
+	if errors.Is(err, state.ErrNotFound) {
+		// Run a dummy argon2 verify so a nonexistent account takes the same
+		// time as a wrong password — no timing-based user enumeration.
+		verifyPassword(c.Password, dummyHash)
+		s.Store.Audit(c.Email, "login.failed", "panel", clientIP(r))
+		respondErr(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if err == nil && !verifyPassword(c.Password, user.PasswordHash) {
 		s.Store.Audit(c.Email, "login.failed", "panel", clientIP(r))
 		respondErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -188,6 +200,24 @@ func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.sessionUser(r); err != nil {
 			respondErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// requireAdmin guards state-changing endpoints so read-only accounts can
+// view everything but change nothing (they may still manage their own
+// account via the /api/account routes, which use requireSession).
+func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := s.sessionUser(r)
+		if err != nil {
+			respondErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if user.Role != "admin" {
+			respondErr(w, http.StatusForbidden, "this is a read-only account")
 			return
 		}
 		next(w, r)

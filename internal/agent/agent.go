@@ -127,6 +127,7 @@ func (a *Agent) RegisterAll(s *rpc.Server) {
 	s.Handle(rpc.MethodSelfUpdate, typed(a.SelfUpdate))
 	s.Handle(rpc.MethodCacheStats, typed(a.CacheStats))
 	s.Handle(rpc.MethodWarmCache, typed(a.WarmCache))
+	s.Handle(rpc.MethodTestBackup, typed(a.TestBackup))
 }
 
 // typed adapts a strongly-typed handler to the raw RPC signature.

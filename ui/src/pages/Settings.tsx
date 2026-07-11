@@ -53,7 +53,10 @@ export default function Settings() {
           <label>Repository password</label>
           <input type="password" {...bind("backup_password")} />
           <p className="dim3" style={{ fontSize: 12, marginTop: 8 }}>Backups are encrypted before leaving this server and run automatically on each site's schedule. Losing this password means losing the backups.</p>
-          <button className="mt" disabled={busy}>Save</button>
+          <div className="row mt">
+            <button disabled={busy}>Save</button>
+            <button type="button" className="ghost" disabled={busy} onClick={() => run(async () => { const r = await api.post<{ snapshots: number }>("/api/backups/test"); toast.ok(`Repository reachable — ${r.snapshots} snapshot(s).`); })}>Test connection</button>
+          </div>
         </form>
 
         <form className="card" onSubmit={saveSettings}>

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/slipstream-panel/slipstream/internal/engine/nginx"
 	"github.com/slipstream-panel/slipstream/internal/rpc"
@@ -59,6 +60,13 @@ server {
 	if err != nil {
 		return nil, err
 	}
+	// Only rewrite + restart when the certificate actually changed — certbot
+	// no-ops when a cert is not yet due, and restarting the API on every
+	// renewal check (every 12h) would needlessly drop connections.
+	existing, _ := os.ReadFile("/etc/slipstream/certs/panel.pem")
+	if string(existing) == string(fullchain) {
+		return map[string]string{"domain": p.Domain, "status": "unchanged"}, nil
+	}
 	if err := os.WriteFile("/etc/slipstream/certs/panel.pem", fullchain, 0o644); err != nil {
 		return nil, err
 	}
@@ -80,16 +88,25 @@ func (a *Agent) SelfUpdate(p rpc.SelfUpdateParams) (rpc.SelfUpdateResult, error)
 	if p.BaseURL == "" {
 		return rpc.SelfUpdateResult{}, fmt.Errorf("update base URL required")
 	}
+	if !strings.HasPrefix(p.BaseURL, "https://") {
+		return rpc.SelfUpdateResult{}, fmt.Errorf("update URL must be https")
+	}
 	ctx := context.Background()
 	for _, bin := range []string{"panel-api", "slipctl", "panel-agent"} {
 		tmp := filepath.Join(a.Paths.WorkDir, bin+".new")
 		if _, err := a.Runner.Run(ctx, "curl", "-fsSL", "-o", tmp, p.BaseURL+"/"+bin); err != nil {
 			return rpc.SelfUpdateResult{}, fmt.Errorf("download %s: %w", bin, err)
 		}
-		if _, err := a.Runner.Run(ctx, "curl", "-fsSL", "-o", tmp+".sha256", p.BaseURL+"/"+bin+".sha256"); err == nil {
-			if _, err := a.Runner.Run(ctx, "sha256sum", "-c", tmp+".sha256"); err != nil {
-				return rpc.SelfUpdateResult{}, fmt.Errorf("checksum mismatch for %s", bin)
-			}
+		// Fail CLOSED: a checksum is REQUIRED. A server that doesn't publish
+		// one (or a MITM stripping it) must not result in an unverified root
+		// binary being installed.
+		if _, err := a.Runner.Run(ctx, "curl", "-fsSL", "-o", tmp+".sha256", p.BaseURL+"/"+bin+".sha256"); err != nil {
+			os.Remove(tmp)
+			return rpc.SelfUpdateResult{}, fmt.Errorf("no checksum published for %s — refusing unverified update", bin)
+		}
+		if _, err := a.Runner.Run(ctx, "sha256sum", "-c", tmp+".sha256"); err != nil {
+			os.Remove(tmp)
+			return rpc.SelfUpdateResult{}, fmt.Errorf("checksum mismatch for %s", bin)
 		}
 		if _, err := a.Runner.Run(ctx, "install", "-m", "0755", tmp, "/usr/local/bin/"+bin); err != nil {
 			return rpc.SelfUpdateResult{}, fmt.Errorf("install %s: %w", bin, err)

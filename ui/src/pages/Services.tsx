@@ -3,7 +3,7 @@ import { ServiceInfo } from "../types";
 import { useAction, usePoll, useToast } from "../components/ui";
 
 export default function Services() {
-  const [services, reload] = usePoll<ServiceInfo[]>("/api/services", 10000);
+  const { data: services, error, reload } = usePoll<ServiceInfo[]>("/api/services", 10000);
   const toast = useToast();
   const { run, busy } = useAction(toast);
 
@@ -12,6 +12,7 @@ export default function Services() {
       <h1>Services</h1>
       <p className="sub">The system services powering your sites.</p>
       {toast.node}
+      {error && <div className="error-box">{error}</div>}
       <div className="card-list">
         {(services || []).map((s) => (
           <div className="card" key={s.name}>

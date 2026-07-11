@@ -61,8 +61,8 @@
     --border: rgba(0, 0, 0, 0.09);
     --border-2: rgba(0, 0, 0, 0.14);
     --text: #17171a;
-    --text-2: #62626b;
-    --text-3: #9a9aa2;
+    --text-2: #55555f;
+    --text-3: #767683;
     --accent-soft: rgba(47, 127, 255, 0.1);
     --accent-text: #1e63e0;
     --good: #059669; --good-soft: rgba(5, 150, 105, 0.1);
@@ -77,7 +77,7 @@
 }
 :root[data-theme="light"] {
   --bg: #fafafa; --bg-elev: #fff; --surface: #fff; --surface-2: #f7f7f8; --surface-hover: #f2f2f3;
-  --border: rgba(0,0,0,.09); --border-2: rgba(0,0,0,.14); --text: #17171a; --text-2: #62626b; --text-3: #9a9aa2;
+  --border: rgba(0,0,0,.09); --border-2: rgba(0,0,0,.14); --text: #17171a; --text-2: #55555f; --text-3: #767683;
   --accent-soft: rgba(47,127,255,.1); --accent-text: #1e63e0;
   --good: #059669; --good-soft: rgba(5,150,105,.1); --warn: #b45309; --warn-soft: rgba(180,83,9,.1);
   --bad: #dc2626; --bad-soft: rgba(220,38,38,.1);
@@ -209,6 +209,8 @@ h3 { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: 
   transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 .site-row:hover { border-color: var(--border-2); background: var(--surface-2); text-decoration: none; }
+.site-row, .site-row:hover .domain { color: var(--text); }
+.site-row .domain { color: var(--text); }
 .site-row .favicon { width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center; font-size: 15px; background: var(--surface-2); border: 1px solid var(--border); }
 .site-row .rowmain { flex: 1; min-width: 0; }
 .site-row .domain { font-weight: 580; font-size: 14px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 9px; overflow: hidden; }
@@ -269,7 +271,7 @@ button, .btn {
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
   white-space: nowrap;
 }
-button:hover, .btn:hover { background: var(--accent-hover); text-decoration: none; }
+button:hover, .btn:hover { background: var(--accent-hover); text-decoration: none; color: #fff; }
 button:active, .btn:active { transform: translateY(0.5px); background: var(--accent-press); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -376,8 +378,10 @@ pre.log {
 .kv dd { margin: 0; font-weight: 500; }
 
 .switch { position: relative; display: inline-block; width: 38px; height: 21px; flex: none; }
-.switch input { display: none; }
-.switch .slider { position: absolute; inset: 0; background: var(--surface-2); border: 1px solid var(--border-2); border-radius: var(--r-full); transition: var(--dur) var(--ease); cursor: pointer; }
+/* Keep the checkbox in the tab order (keyboard-operable) but visually hidden. */
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch .slider { position: absolute; inset: 0; background: var(--surface-2); border: 1px solid var(--border-2); border-radius: var(--r-full); transition: var(--dur) var(--ease); cursor: pointer; pointer-events: none; }
 .switch .slider::before { content: ""; position: absolute; width: 15px; height: 15px; left: 2px; top: 2px; background: var(--text-2); border-radius: 50%; transition: var(--dur) var(--ease); }
 .switch input:checked + .slider { background: var(--accent); border-color: var(--accent); }
 .switch input:checked + .slider::before { transform: translateX(17px); background: #fff; }

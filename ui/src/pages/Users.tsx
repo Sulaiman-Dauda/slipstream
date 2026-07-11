@@ -4,7 +4,7 @@ import { PanelUser } from "../types";
 import { Modal, useAction, usePoll, useToast } from "../components/ui";
 
 export default function Users() {
-  const [users, reload] = usePoll<PanelUser[]>("/api/users", 0);
+  const { data: users, error, reload } = usePoll<PanelUser[]>("/api/users", 0);
   const [creating, setCreating] = useState(false);
   const toast = useToast();
   const { run } = useAction(toast);
@@ -16,6 +16,7 @@ export default function Users() {
         <button onClick={() => setCreating(true)}>+ Add user</button>
       </div>
       {toast.node}
+      {error && <div className="error-box">{error}</div>}
       <div className="table-wrap">
         <table>
           <thead><tr><th>Email</th><th>Role</th><th>2FA</th><th>Added</th><th></th></tr></thead>

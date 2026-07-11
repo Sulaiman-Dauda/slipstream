@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, fmtAgo, fmtBytes, fmtDuration } from "../api";
+import { api, ApiError, fmtAgo, fmtBytes, fmtDuration } from "../api";
 import { Backup, Deployment, GuardReport, Site } from "../types";
 import { StatusBadge, useAction, useToast, usePoll } from "../components/ui";
 import GuardReportView from "../components/GuardReport";
@@ -21,15 +21,23 @@ export default function SiteDetail() {
   const toast = useToast();
   const { run } = useAction(toast);
   const [site, setSite] = useState<Site | null>(null);
-  const tab = (params.get("tab") as Tab) || "overview";
-  const setTab = (t: Tab) => setParams({ tab: t });
+  const [loadErr, setLoadErr] = useState("");
+  // Replace (not push) so the browser back button leaves the page instead of
+  // cycling through previously-viewed tabs.
+  const setTab = (t: Tab) => setParams({ tab: t }, { replace: true });
 
   const load = useCallback(() => {
-    api.get<Site>(`/api/sites/${siteId}`).then(setSite).catch(() => navigate("/sites"));
+    api.get<Site>(`/api/sites/${siteId}`).then((s) => { setSite(s); setLoadErr(""); })
+      .catch((e) => {
+        // Only leave the page when the site is actually gone (404) — a
+        // transient error during polling must not eject the user mid-edit.
+        if (e instanceof ApiError && e.status === 404) navigate("/sites");
+        else setLoadErr(e instanceof Error ? e.message : "Failed to load site");
+      });
   }, [siteId, navigate]);
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
 
-  if (!site) return <div className="empty"><span className="spinner" /></div>;
+  if (!site) return loadErr ? <div className="error-box">{loadErr}</div> : <div className="empty"><span className="spinner" /></div>;
 
   const isWP = site.type === "wordpress" || site.type === "woocommerce";
   const hasPHP = !!site.php_version;
@@ -42,6 +50,9 @@ export default function SiteDetail() {
     ...(hasPHP ? [["php", "PHP"] as [Tab, string]] : []),
     ["sftp", "SFTP"], ["logs", "Logs"],
   ];
+  // Guard against a URL forcing a tab that doesn't apply to this site type.
+  const requested = (params.get("tab") as Tab) || "overview";
+  const tab: Tab = tabs.some(([t]) => t === requested) ? requested : "overview";
 
   return (
     <>
@@ -52,7 +63,7 @@ export default function SiteDetail() {
         </div>
         <div className="row">
           <a className="btn ghost" href={`https://${site.domain}`} target="_blank" rel="noreferrer"><Icon.external /> Visit</a>
-          <button className="danger" onClick={() => { if (confirm(`Delete ${site.domain} and all its data? This cannot be undone.`)) run(() => api.del(`/api/sites/${site.id}`), "Deletion started").then(() => navigate("/sites")); }}>Delete</button>
+          <button className="danger" onClick={() => { if (confirm(`Delete ${site.domain} and all its data? This cannot be undone.`)) run(() => api.del(`/api/sites/${site.id}`), "Deletion started").then((ok) => { if (ok) navigate("/sites"); }); }}>Delete</button>
         </div>
       </div>
 
@@ -144,7 +155,7 @@ function CacheTab({ site, onChange }: { site: Site; onChange: () => void }) {
 }
 
 function Deployments({ site, run }: { site: Site; run: RunFn }) {
-  const [deps] = usePoll<Deployment[]>(`/api/sites/${site.id}/deployments`, 8000);
+  const { data: deps } = usePoll<Deployment[]>(`/api/sites/${site.id}/deployments`, 8000);
   const [expanded, setExpanded] = useState<number | null>(null);
   const badge: Record<string, string> = { created: "dim", guarding: "accent", blocked: "bad", promoted: "good", rolled_back: "warn" };
 
@@ -163,15 +174,15 @@ function Deployments({ site, run }: { site: Site; run: RunFn }) {
                 let guard: GuardReport | null = null;
                 try { guard = d.guard_json ? JSON.parse(d.guard_json) : null; } catch { guard = null; }
                 return (
-                  <>
-                    <tr key={d.id}>
+                  <Fragment key={d.id}>
+                    <tr>
                       <td className="mono">{d.release_id}</td>
                       <td><span className={`badge ${badge[d.status] || "dim"}`}>{d.status.replace("_", " ")}</span></td>
                       <td>{guard ? <button className="ghost tiny" onClick={() => setExpanded(expanded === d.id ? null : d.id)}>{guard.verdict} ▾</button> : <span className="dim3">—</span>}</td>
                       <td className="dim">{fmtAgo(d.created_at)}</td>
                     </tr>
-                    {expanded === d.id && guard && <tr key={`${d.id}-g`}><td colSpan={4} style={{ background: "var(--bg-2)" }}><GuardReportView report={guard} /></td></tr>}
-                  </>
+                    {expanded === d.id && guard && <tr><td colSpan={4} style={{ background: "var(--bg-2)" }}><GuardReportView report={guard} /></td></tr>}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -183,7 +194,7 @@ function Deployments({ site, run }: { site: Site; run: RunFn }) {
 }
 
 function Backups({ site, run }: { site: Site; run: RunFn }) {
-  const [backups] = usePoll<Backup[]>(`/api/sites/${site.id}/backups`, 8000);
+  const { data: backups } = usePoll<Backup[]>(`/api/sites/${site.id}/backups`, 8000);
   const latest = backups?.[0];
   const badge: Record<string, string> = { pending: "dim", passed: "good", failed: "bad" };
   return (
@@ -236,15 +247,15 @@ function PHPTab({ site, onChange }: { site: Site; onChange: () => void }) {
         </div>
         <div>
           <label>Memory limit <span className="hint">MB · 64–4096</span></label>
-          <input type="number" value={mem} onChange={(e) => setMem(Number(e.target.value))} />
+          <input type="number" min={64} max={4096} value={mem} onChange={(e) => setMem(Number(e.target.value))} />
         </div>
         <div>
           <label>Max upload size <span className="hint">MB · 1–2048</span></label>
-          <input type="number" value={upload} onChange={(e) => setUpload(Number(e.target.value))} />
+          <input type="number" min={1} max={2048} value={upload} onChange={(e) => setUpload(Number(e.target.value))} />
         </div>
         <div>
           <label>Max execution time <span className="hint">s · 10–600</span></label>
-          <input type="number" value={exec} onChange={(e) => setExec(Number(e.target.value))} />
+          <input type="number" min={10} max={600} value={exec} onChange={(e) => setExec(Number(e.target.value))} />
         </div>
       </div>
       {toast.node}

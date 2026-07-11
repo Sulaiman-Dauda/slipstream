@@ -4,10 +4,29 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 )
+
+// sshPort reads the active SSH listening port so we never firewall it off.
+func sshPort() int {
+	b, err := os.ReadFile("/etc/ssh/sshd_config")
+	if err != nil {
+		return 22
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(strings.TrimSpace(line))
+		if len(f) == 2 && strings.EqualFold(f[0], "Port") {
+			if n, err := strconv.Atoi(f[1]); err == nil {
+				return n
+			}
+		}
+	}
+	return 22
+}
 
 // FirewallStatus parses `ufw status`.
 func (a *Agent) FirewallStatus() (rpc.FirewallStatusResult, error) {
@@ -46,6 +65,12 @@ func (a *Agent) FirewallRule(p rpc.FirewallRuleParams) (map[string]string, error
 		}
 	}
 
+	// Never let the panel deny the SSH port — that's an un-recoverable
+	// lockout with no in-band way back in.
+	if p.Action == "deny" && (p.Port == 22 || p.Port == sshPort()) {
+		return nil, fmt.Errorf("refusing to deny the SSH port (%d) — you would lock yourself out", p.Port)
+	}
+
 	ctx := context.Background()
 	portProto := fmt.Sprintf("%d/%s", p.Port, proto)
 	var args []string
@@ -57,6 +82,9 @@ func (a *Agent) FirewallRule(p rpc.FirewallRuleParams) (map[string]string, error
 			args = []string{p.Action, portProto}
 		}
 	case "delete":
+		// Remove whichever rule kind exists (allow or deny); UFW ignores the
+		// one that isn't present.
+		a.Runner.Run(ctx, "ufw", "delete", "deny", portProto)
 		args = []string{"delete", "allow", portProto}
 	default:
 		return nil, fmt.Errorf("invalid action %q", p.Action)

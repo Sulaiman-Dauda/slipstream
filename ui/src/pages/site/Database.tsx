@@ -21,11 +21,14 @@ export default function Database({ site }: { site: Site }) {
   const runQuery = () =>
     run(async () => setResult(await api.post<QueryResult>(`/api/sites/${site.id}/database/query`, { sql, allow_writes: allowWrites })));
 
-  const launchAdminer = () =>
+  const launchAdminer = () => {
+    const tab = window.open("about:blank", "_blank");
     run(async () => {
       const r = await api.post<{ url: string }>(`/api/sites/${site.id}/database/adminer`);
-      window.open(r.url, "_blank");
-    }, "Database console opened in a new tab (expires in 30 minutes)");
+      if (tab) tab.location.href = r.url;
+      else window.location.href = r.url;
+    }, "Database console opened (expires in 30 minutes)").then((ok) => { if (!ok && tab) tab.close(); });
+  };
 
   if (!site.config.database.enabled) return <div className="info-box">This site has no managed database.</div>;
 

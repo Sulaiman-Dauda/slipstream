@@ -28,7 +28,10 @@ export default function Cron({ site }: { site: Site }) {
     run(() => api.post(`/api/sites/${site.id}/cron`, { schedule, command, description }), "Cron job added")
       .then((ok) => { if (ok) { setCommand(""); setDescription(""); load(); } });
   };
-  const del = (id: number) => run(() => api.del(`/api/cron/${id}`), "Removed").then((ok) => ok && load());
+  const del = (id: number) => {
+    if (!confirm("Remove this scheduled task?")) return;
+    run(() => api.del(`/api/cron/${id}`), "Removed").then((ok) => ok && load());
+  };
 
   const wpExample = site.type === "wordpress" || site.type === "woocommerce";
 

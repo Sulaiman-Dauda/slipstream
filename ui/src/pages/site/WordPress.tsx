@@ -22,11 +22,16 @@ export default function WordPress({ site }: { site: Site }) {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [site.id]);
 
-  const magicLogin = () =>
+  const magicLogin = () => {
+    // Open the tab synchronously (inside the click) so it isn't blocked, then
+    // point it at the login URL once the request returns.
+    const tab = window.open("about:blank", "_blank");
     run(async () => {
       const r = await api.post<{ url: string }>(`/api/sites/${site.id}/wp/login`);
-      window.open(r.url, "_blank");
-    }, "Logging you into wp-admin…");
+      if (tab) tab.location.href = r.url;
+      else window.location.href = r.url;
+    }).then((ok) => { if (!ok && tab) tab.close(); });
+  };
 
   const update = (what: string) => run(() => api.post(`/api/sites/${site.id}/wp/update`, { what }), `Updating ${what}…`);
   const toggleCache = (enable: boolean) => run(() => api.post(`/api/sites/${site.id}/wp/object-cache`, { enable }), enable ? "Enabling Redis object cache…" : "Disabling object cache…");

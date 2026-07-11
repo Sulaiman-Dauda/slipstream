@@ -69,6 +69,22 @@ func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusAccepted, map[string]any{"task": task})
 }
 
+// handleTestBackupRepo checks the configured Restic repository is reachable
+// so operators can validate backups before depending on them.
+func (s *Server) handleTestBackupRepo(w http.ResponseWriter, r *http.Request) {
+	repo, password, ok := s.backupConfig(w)
+	if !ok {
+		return
+	}
+	var out map[string]any
+	if err := s.Agent.Call(rpc.MethodTestBackup, rpc.BackupParams{Repository: repo, Password: password}, &out); err != nil {
+		respondErr(w, http.StatusBadGateway, "repository not reachable: "+err.Error())
+		return
+	}
+	s.Store.Audit(s.actor(r), "backup.test", repo, "")
+	respond(w, http.StatusOK, out)
+}
+
 // handleVerifyBackup runs the verified-restore test: restore into a scratch
 // directory, check integrity, record the measured recovery time.
 func (s *Server) handleVerifyBackup(w http.ResponseWriter, r *http.Request) {

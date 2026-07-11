@@ -22,11 +22,15 @@ export default function TaskFeed({ siteId, limit = 8 }: { siteId?: number; limit
         /* skip malformed frame */
       }
     });
-    source.onerror = () => {
-      // Fall back to one-shot fetch; the browser retries SSE on its own.
-      api.get<Task[]>("/api/tasks").then((t) => setTasks(t ?? [])).catch(() => undefined);
-    };
+    // onerror fires on every failed reconnect while the endpoint is down; do
+    // NOT fetch on each one (that becomes a request storm during an outage).
+    // The browser retries the SSE stream on its own.
+    let alive = true;
+    source.onerror = () => {};
+    // One initial fallback fetch in case the stream is slow to deliver.
+    api.get<Task[]>("/api/tasks").then((t) => { if (alive) setTasks(t ?? []); }).catch(() => undefined);
     return () => {
+      alive = false;
       source?.close();
       source = null;
     };

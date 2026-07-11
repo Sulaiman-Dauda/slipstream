@@ -75,7 +75,15 @@ class WP_Object_Cache {
         if (wp_suspend_cache_addition()) { return false; }
         $id = $this->full_key($key, $group);
         if (isset($this->runtime[$id])) { return false; }
-        return $this->set($key, $data, $group, $expire);
+        if (isset($this->non_persistent[$group])) { $this->runtime[$id] = $data; return true; }
+        // apcu_add is atomic set-if-absent — WordPress relies on this for
+        // locks (e.g. doing_cron); a plain store would let two workers both
+        // "acquire" the lock.
+        if (apcu_add($id, is_object($data) ? clone $data : $data, max(0, (int) $expire))) {
+            $this->runtime[$id] = $data;
+            return true;
+        }
+        return false;
     }
 
     public function replace($key, $data, $group = 'default', $expire = 0) {
@@ -133,7 +141,18 @@ class WP_Object_Cache {
     }
     public function decr($key, $offset = 1, $group = 'default') { return $this->incr($key, -abs((int) $offset), $group); }
 
-    public function flush() { $this->runtime = []; return apcu_clear_cache(); }
+    public function flush() {
+        // Only clear THIS site's keys — apcu_clear_cache() would wipe every
+        // co-hosted site sharing this PHP-FPM master's APCu segment.
+        $this->runtime = [];
+        if (class_exists('APCUIterator')) {
+            foreach (new APCUIterator('/^' . preg_quote($this->prefix, '/') . '/') as $item) {
+                apcu_delete($item['key']);
+            }
+            return true;
+        }
+        return apcu_clear_cache();
+    }
     public function flush_runtime() { $this->runtime = []; return true; }
     public function flush_group($group) {
         $prefix = $this->full_key('', $group);

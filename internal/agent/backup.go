@@ -94,6 +94,26 @@ func (a *Agent) RunBackup(p rpc.BackupParams) (rpc.BackupResult, error) {
 	return rpc.BackupResult{SnapshotID: snapshotID, SizeBytes: size}, nil
 }
 
+// TestBackup verifies a repository is reachable and the password is correct,
+// initializing it if needed — so an operator learns their backup destination
+// works before relying on it, not when they need to restore.
+func (a *Agent) TestBackup(p rpc.BackupParams) (map[string]any, error) {
+	ctx := context.Background()
+	if p.Repository == "" || p.Password == "" {
+		return nil, fmt.Errorf("repository and password required")
+	}
+	if err := a.ensureRepo(ctx, p.Repository, p.Password); err != nil {
+		return nil, err
+	}
+	out, err := a.restic(ctx, p.Password, "-r", p.Repository, "snapshots", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var snaps []struct{ ID string }
+	_ = json.Unmarshal([]byte(out), &snaps)
+	return map[string]any{"reachable": true, "snapshots": len(snaps)}, nil
+}
+
 // RestoreSnapshot restores a snapshot in place (disaster recovery) or into
 // a target directory (verified restore tests, cross-server moves).
 func (a *Agent) RestoreSnapshot(p rpc.RestoreParams) (map[string]string, error) {
