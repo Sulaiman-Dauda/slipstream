@@ -144,9 +144,8 @@ server {
     location / { return 301 https://$host$request_uri; }
 }
 server {
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
-    http2 on;
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
     server_name _;
     server_tokens off;
     ssl_certificate /etc/slipstream/certs/panel.pem;

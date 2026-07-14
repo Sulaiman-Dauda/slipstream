@@ -166,6 +166,17 @@ gzip_comp_level 5;
 gzip_min_length 1024;
 gzip_types text/plain text/css text/xml application/json application/javascript
            application/xml+rss application/atom+xml image/svg+xml font/woff2;
+
+# Velocity Engine pre-compressed cache: normalize Accept-Encoding to at most
+# two buckets so the page cache stores a gzip variant and an identity variant.
+# PHP gzips its own output (zlib.output_compression), nginx caches that
+# already-compressed body, and cache hits are served verbatim with zero
+# per-request compression CPU — the throughput ceiling that per-request gzip
+# imposes on a hot cache.
+map $http_accept_encoding $slip_enc {
+    default   "";
+    "~*gzip"  ".gz";
+}
 `
 
 var zoneTmpl = template.Must(template.New("zone").Parse(
@@ -192,9 +203,8 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name {{.ServerNames}};
     server_tokens off;
 
@@ -297,9 +307,12 @@ server {
         fastcgi_buffer_size 64k;
 {{- if .Policy.Enabled}}
 
-        # Velocity Engine full-page cache.
+        # Velocity Engine full-page cache. The cache key includes a normalized
+        # Accept-Encoding bucket ($slip_enc) so the gzip-encoded response PHP
+        # produces is stored and served as-is — cache hits skip per-request
+        # compression entirely.
         fastcgi_cache {{.ZoneName}};
-        fastcgi_cache_key "$scheme$request_method$host$request_uri";
+        fastcgi_cache_key "$scheme$request_method$host$request_uri$slip_enc";
         fastcgi_cache_valid 200 301 {{.Policy.TTLSec}}s;
         fastcgi_cache_valid 404 60s;
         fastcgi_cache_methods GET HEAD;

@@ -39,9 +39,8 @@ server {
 	location / { return 301 https://$host$request_uri; }
 }
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name %s;
     server_tokens off;
     ssl_certificate /etc/slipstream/certs/panel.pem;
