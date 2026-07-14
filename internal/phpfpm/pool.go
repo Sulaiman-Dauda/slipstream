@@ -216,6 +216,19 @@ php_admin_value[opcache.interned_strings_buffer] = {{.OPcache.InternedStringsMB}
 php_admin_value[opcache.max_accelerated_files] = {{.OPcache.MaxFiles}}
 php_admin_value[opcache.validate_timestamps] = 1
 php_admin_value[opcache.revalidate_freq] = 60
+; OPcache JIT (tracing) — compiles hot PHP to native code. Off by default in
+; PHP 8.x (jit_buffer_size=0). Measurable win on compute-heavy WooCommerce and
+; theme rendering; negligible cost for cached hits (they never reach PHP).
+php_admin_value[opcache.jit] = tracing
+php_admin_value[opcache.jit_buffer_size] = 128M
+php_admin_flag[opcache.enable_cli] = off
 php_admin_value[realpath_cache_size] = 4096K
 php_admin_value[realpath_cache_ttl] = 600
+
+; Pre-compress at the source: PHP gzips its own output so the Velocity Engine
+; page cache stores an already-compressed body and serves cache hits with no
+; per-request compression CPU. Uncacheable/dynamic responses are compressed
+; here too (same work nginx would otherwise do), keeping one code path.
+php_admin_flag[zlib.output_compression] = on
+php_admin_value[zlib.output_compression_level] = 5
 `))

@@ -60,7 +60,7 @@ func TestWooCommerceVhost(t *testing.T) {
 	// Velocity Engine invariants — every one of these is a product claim.
 	for _, want := range []string{
 		"fastcgi_cache slip_7;",
-		`fastcgi_cache_key "$scheme$request_method$host$request_uri";`,
+		`fastcgi_cache_key "$scheme$request_method$host$request_uri$slip_enc";`,
 		"fastcgi_cache_lock on;",                  // request coalescing
 		"fastcgi_cache_use_stale updating error", // SWR + stale-if-error
 		"fastcgi_cache_background_update on;",
