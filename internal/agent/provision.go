@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/engine"
 	"github.com/slipstream-panel/slipstream/internal/engine/nginx"
@@ -441,15 +442,32 @@ func (a *Agent) DeleteSite(p rpc.SiteRef) (map[string]any, error) {
 	if err := os.RemoveAll(site.RootPath); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove site files: %w", err))
 	}
-	// userdel is not idempotent, so only invoke it while the identity exists.
-	if _, err := a.Runner.Run(ctx, "id", "-u", site.SystemUser); err == nil {
-		if _, err := a.Runner.Run(ctx, "userdel", site.SystemUser); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove user: %w", err))
-		}
-	}
+	// Stop the site's PHP-FPM workers BEFORE removing its Unix identity. The
+	// pool file was removed above, so reloading drops the pool — but a graceful
+	// reload lets in-flight workers finish, and userdel(8) refuses to remove a
+	// user that still owns a live process (exit 8). That race used to strand the
+	// identity and fail the whole delete, leaving the site stuck in "error".
 	if site.PHPVersion != "" {
 		if err := a.reloadPHPFPM(ctx, site.PHPVersion); err != nil {
 			cleanupErrs = append(cleanupErrs, err)
+		}
+	}
+	// userdel is not idempotent, so only invoke it while the identity exists.
+	if _, err := a.Runner.Run(ctx, "id", "-u", site.SystemUser); err == nil {
+		// Kill any straggler processes still owned by the identity, then retry
+		// userdel briefly — a SIGKILL is not always reaped the instant pkill
+		// returns, and a worker may exit a moment after the reload.
+		a.Runner.Run(ctx, "pkill", "-9", "-u", site.SystemUser)
+		var delErr error
+		for attempt := 0; attempt < 5; attempt++ {
+			if _, delErr = a.Runner.Run(ctx, "userdel", site.SystemUser); delErr == nil {
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+			a.Runner.Run(ctx, "pkill", "-9", "-u", site.SystemUser)
+		}
+		if delErr != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove user: %w", delErr))
 		}
 	}
 	if err := a.reloadNginx(); err != nil {

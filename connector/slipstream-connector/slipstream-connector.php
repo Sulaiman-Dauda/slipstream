@@ -36,6 +36,10 @@ final class Slipstream_Connector
 
     public static function kill_cart_fragments(): void
     {
+        // is_cart()/is_checkout() are WooCommerce conditionals; guard against
+        // any request where WooCommerce frontend functions are not loaded, or
+        // this hook fatals and takes the whole page down with a 500.
+        if (!function_exists('is_cart') || !function_exists('is_checkout')) { return; }
         if (is_cart() || is_checkout()) { return; }
         wp_dequeue_script('wc-cart-fragments');
     }

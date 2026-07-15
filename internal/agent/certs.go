@@ -28,10 +28,17 @@ func (a *Agent) preflightHTTP01(ctx context.Context, domains []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("prepare ACME webroot: %w", err)
 	}
+	// os.MkdirAll and os.WriteFile honor the process umask, and the systemd
+	// units run the agent with UMask=0027 — which strips the world bits nginx
+	// (www-data) needs to traverse the challenge directory and read the token,
+	// making every HTTP-01 validation return 403. Force readable perms.
+	_ = os.Chmod(filepath.Join(a.Paths.ACMEWebroot, ".well-known"), 0o755)
+	_ = os.Chmod(dir, 0o755)
 	probe := filepath.Join(dir, token)
 	if err := os.WriteFile(probe, []byte(token), 0o644); err != nil {
 		return fmt.Errorf("write ACME preflight: %w", err)
 	}
+	_ = os.Chmod(probe, 0o644)
 	defer os.Remove(probe)
 
 	client := &http.Client{
