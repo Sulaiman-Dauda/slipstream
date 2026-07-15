@@ -39,9 +39,8 @@ server {
 	location / { return 301 https://$host$request_uri; }
 }
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name %s;
     server_tokens off;
     ssl_certificate /etc/slipstream/certs/panel.pem;
@@ -110,6 +109,15 @@ server {
 // Binaries are fetched to a temp path, checksum-verified, moved into place,
 // and services restarted (agent last, so the API restart happens under the
 // old agent and the new agent starts fresh).
+// firstField returns the first whitespace-delimited token of s (e.g. the hex
+// digest from "<hash>  <filename>" sha256sum output), or "".
+func firstField(s string) string {
+	if f := strings.Fields(s); len(f) > 0 {
+		return f[0]
+	}
+	return ""
+}
+
 func (a *Agent) SelfUpdate(p rpc.SelfUpdateParams) (rpc.SelfUpdateResult, error) {
 	if p.BaseURL == "" {
 		return rpc.SelfUpdateResult{}, fmt.Errorf("update base URL required")
@@ -118,32 +126,134 @@ func (a *Agent) SelfUpdate(p rpc.SelfUpdateParams) (rpc.SelfUpdateResult, error)
 		return rpc.SelfUpdateResult{}, fmt.Errorf("update URL must be https")
 	}
 	ctx := context.Background()
-	for _, bin := range []string{"panel-api", "slipctl", "panel-agent"} {
+	bins := []string{"panel-api", "slipctl", "panel-agent"}
+
+	// Stage 1: download, verify and validate EVERY binary before swapping any.
+	// A bad download must never leave a half-updated install.
+	staged := map[string]string{}
+	cleanupStaged := func() {
+		for _, tmp := range staged {
+			os.Remove(tmp)
+			os.Remove(tmp + ".sha256")
+		}
+	}
+	for _, bin := range bins {
 		tmp := filepath.Join(a.Paths.WorkDir, bin+".new")
 		if _, err := a.Runner.Run(ctx, "curl", "-fsSL", "-o", tmp, p.BaseURL+"/"+bin); err != nil {
+			cleanupStaged()
 			return rpc.SelfUpdateResult{}, fmt.Errorf("download %s: %w", bin, err)
 		}
 		// Fail CLOSED: a checksum is REQUIRED. A server that doesn't publish
 		// one (or a MITM stripping it) must not result in an unverified root
 		// binary being installed.
 		if _, err := a.Runner.Run(ctx, "curl", "-fsSL", "-o", tmp+".sha256", p.BaseURL+"/"+bin+".sha256"); err != nil {
+			cleanupStaged()
 			os.Remove(tmp)
 			return rpc.SelfUpdateResult{}, fmt.Errorf("no checksum published for %s — refusing unverified update", bin)
 		}
-		if _, err := a.Runner.Run(ctx, "sha256sum", "-c", tmp+".sha256"); err != nil {
+		// Compare hashes directly. "sha256sum -c" matches on the filename
+		// column of the .sha256 file (the published base name), which never
+		// equals our temp file name — so it fails EVERY update. Parse and
+		// compare the hex digest instead.
+		sumOut, err := a.Runner.Run(ctx, "sha256sum", tmp)
+		if err != nil {
+			cleanupStaged()
+			os.Remove(tmp)
+			return rpc.SelfUpdateResult{}, fmt.Errorf("hash %s: %w", bin, err)
+		}
+		pub, err := os.ReadFile(tmp + ".sha256")
+		if err != nil {
+			cleanupStaged()
+			os.Remove(tmp)
+			return rpc.SelfUpdateResult{}, fmt.Errorf("read checksum for %s: %w", bin, err)
+		}
+		gotHash, wantHash := firstField(sumOut), firstField(string(pub))
+		if len(wantHash) != 64 || !strings.EqualFold(gotHash, wantHash) {
+			cleanupStaged()
 			os.Remove(tmp)
 			return rpc.SelfUpdateResult{}, fmt.Errorf("checksum mismatch for %s", bin)
 		}
+		// Reject anything that is not a native executable for this machine
+		// (truncated download, wrong architecture, an HTML error page) before
+		// it can replace a live root binary. Skip only if file(1) is absent —
+		// the checksum already guarantees integrity.
+		if out, ferr := a.Runner.Run(ctx, "file", "-b", tmp); ferr == nil && (!strings.Contains(out, "ELF") || !strings.Contains(out, "x86-64")) {
+			cleanupStaged()
+			os.Remove(tmp)
+			return rpc.SelfUpdateResult{}, fmt.Errorf("%s is not a valid x86-64 executable — refusing update", bin)
+		}
+		staged[bin] = tmp
+	}
+
+	// Stage 2: back up the live binaries so we can roll back, then swap.
+	backups := map[string]string{}
+	restore := func() {
+		for bin, bak := range backups {
+			a.Runner.Run(ctx, "install", "-m", "0755", bak, "/usr/local/bin/"+bin)
+		}
+	}
+	for _, bin := range bins {
+		live := "/usr/local/bin/" + bin
+		bak := live + ".bak"
+		if _, err := a.Runner.Run(ctx, "cp", "-a", live, bak); err == nil {
+			backups[bin] = bak
+		}
+	}
+	for bin, tmp := range staged {
 		if _, err := a.Runner.Run(ctx, "install", "-m", "0755", tmp, "/usr/local/bin/"+bin); err != nil {
-			return rpc.SelfUpdateResult{}, fmt.Errorf("install %s: %w", bin, err)
+			restore()
+			cleanupStaged()
+			return rpc.SelfUpdateResult{}, fmt.Errorf("install %s failed, rolled back: %w", bin, err)
 		}
 		os.Remove(tmp)
+		os.Remove(tmp + ".sha256")
 	}
-	// Restart API now; the agent restarts itself last (systemd brings it
-	// back up), which also ends this RPC connection cleanly.
-	a.Runner.Run(ctx, "systemctl", "restart", "slipstream-api")
-	go func() {
-		a.Runner.Run(context.Background(), "systemctl", "restart", "slipstream-agent")
-	}()
+
+	// Stage 3: hand the restart + health-gate + rollback to a DETACHED guard.
+	// It cannot run inline: restarting slipstream-api tears down our RPC caller
+	// and restarting the agent tears down this process, so the verify-and-roll-
+	// back must outlive both. The guard restarts the API on the new binary,
+	// polls /healthz, and if it does not come up, reinstalls the .bak binaries
+	// and restarts — so a broken build never leaves the panel down.
+	guard := filepath.Join(a.Paths.WorkDir, "update-guard.sh")
+	if err := os.WriteFile(guard, []byte(updateGuardScript), 0o700); err != nil {
+		restore()
+		cleanupStaged()
+		return rpc.SelfUpdateResult{}, fmt.Errorf("write update guard: %w", err)
+	}
+	// --collect garbage-collects the transient unit after it exits; no --unit so
+	// concurrent runs can't collide on a fixed name.
+	if _, err := a.Runner.Run(ctx, "systemd-run", "--collect", "/bin/bash", guard); err != nil {
+		restore()
+		a.Runner.Run(ctx, "systemctl", "reset-failed", "slipstream-api")
+		a.Runner.Run(ctx, "systemctl", "restart", "slipstream-api")
+		return rpc.SelfUpdateResult{}, fmt.Errorf("launch update guard failed, rolled back: %w", err)
+	}
 	return rpc.SelfUpdateResult{UpdatedTo: p.Version, Restarted: true}, nil
 }
+
+// updateGuardScript restarts panel-api on the freshly installed binaries,
+// health-gates it, and rolls back to the .bak binaries if it does not come up.
+// It runs as a detached systemd transient unit so it survives the restarts of
+// both panel-api (the update's RPC caller) and the agent.
+const updateGuardScript = `#!/bin/bash
+set -u
+HEALTH="https://127.0.0.1:5252/healthz"
+systemctl reset-failed slipstream-api 2>/dev/null
+systemctl restart slipstream-api
+ok=0
+for i in $(seq 1 20); do
+  sleep 1
+  [ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "$HEALTH" 2>/dev/null)" = "200" ] && { ok=1; break; }
+done
+if [ "$ok" != "1" ]; then
+  for b in panel-api slipctl panel-agent; do
+    [ -f "/usr/local/bin/$b.bak" ] && install -m0755 "/usr/local/bin/$b.bak" "/usr/local/bin/$b"
+  done
+  systemctl reset-failed slipstream-api slipstream-agent 2>/dev/null
+  systemctl restart slipstream-agent
+  systemctl restart slipstream-api
+else
+  systemctl restart slipstream-agent
+fi
+`
