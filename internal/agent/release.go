@@ -82,6 +82,16 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 		return fail(err)
 	}
 
+	// Normalize the release root's own mode. `cp -a` preserves the source
+	// tree's permissions, which is correct for the files inside — but the
+	// root would otherwise inherit whatever the source directory happened to
+	// be (e.g. a migration work dir created 0700, or a tarball extracted from
+	// a docroot's contents). nginx (www-data, via the site group) must be able
+	// to traverse the release, so pin the root to the 0750 release convention.
+	if err := os.Chmod(releaseDir, 0o750); err != nil {
+		return fail(err)
+	}
+
 	// Precompress static assets in the new release.
 	precompressTree(releaseDir)
 

@@ -126,6 +126,7 @@ type MigrationResult struct {
 	ReleaseID string `json:"release_id"`
 	Files     int    `json:"files"`
 	Bytes     int64  `json:"bytes"`
+	Skipped   int    `json:"skipped,omitempty"`
 }
 
 // AdminerParams drops a time-limited Adminer instance into a site.
