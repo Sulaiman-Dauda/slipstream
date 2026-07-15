@@ -442,6 +442,11 @@ func (a *Agent) DeleteSite(p rpc.SiteRef) (map[string]any, error) {
 	if err := os.RemoveAll(site.RootPath); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove site files: %w", err))
 	}
+	// Remove any Let's Encrypt certificate + renewal config for this domain.
+	// Otherwise certbot's timer keeps trying (and failing) to renew a cert for
+	// a domain that no longer resolves here, and orphaned configs pile up.
+	// Best-effort: most deletes have no certificate.
+	a.Runner.Run(ctx, "certbot", "delete", "--cert-name", site.Domain, "--non-interactive")
 	// Stop the site's PHP-FPM workers BEFORE removing its Unix identity. The
 	// pool file was removed above, so reloading drops the pool — but a graceful
 	// reload lets in-flight workers finish, and userdel(8) refuses to remove a

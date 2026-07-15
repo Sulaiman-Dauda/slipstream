@@ -204,6 +204,18 @@ SSHD
 sshd -t
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
+# ---------- certificate renewal ----------
+# certbot's timer renews certificates, but without a deploy hook nginx keeps
+# serving the OLD certificate from memory until it is reloaded — so a renewed
+# cert would silently go unserved. Reload nginx after any successful renewal.
+install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+cat > /etc/letsencrypt/renewal-hooks/deploy/slipstream-reload-nginx.sh <<'HOOK'
+#!/bin/bash
+# Managed by Slipstream — reload nginx so a renewed certificate is served.
+systemctl reload nginx 2>/dev/null || true
+HOOK
+chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/slipstream-reload-nginx.sh
+
 # ---------- done ----------
 IP=$(curl -fsS -4 --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
 sleep 2
