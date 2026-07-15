@@ -131,16 +131,26 @@ if (time() > %d) {
     http_response_code(410);
     exit('This database session has expired. Launch a new one from the panel.');
 }
+// Pre-seed Adminer's own session so it connects with the managed credentials
+// and never shows a login form — the operator never has to know (or type) the
+// database password. Adminer's auth gate reads the password from
+// $_SESSION['pwds'][driver][server][username]; credentials() below supplies
+// the actual connection, but the gate must find this entry first or Adminer
+// falls back to the login screen.
+session_name('adminer_sid');
+@session_start();
+$_SESSION['pwds']['server']['127.0.0.1'][%s] = %s;
+session_write_close();
 function adminer_object() {
     class SlipstreamAdminer extends Adminer {
         function credentials() { return ['127.0.0.1', %s, %s]; }
         function database() { return %s; }
         function databases($flush = true) { return [%s]; }
         function login($login, $password) { return true; }
-        function permanentLogin($create = false) { return %s; }
     }
     return new SlipstreamAdminer;
 }
+$_GET['server'] = '127.0.0.1';
 $_GET['username'] = %s;
 $_GET['db'] = %s;
 include __DIR__ . '/%s';
@@ -180,7 +190,8 @@ func (a *Agent) LaunchAdminer(p rpc.AdminerParams) (rpc.AdminerResult, error) {
 	}
 	wrapper := fmt.Sprintf(adminerWrapperTmpl,
 		p.ExpiryUnix, realName,
-		phpStr(p.DBUser), phpStr(p.DBPassword), phpStr(p.DBName), phpStr(p.DBName), "false",
+		phpStr(p.DBUser), phpStr(p.DBPassword),
+		phpStr(p.DBUser), phpStr(p.DBPassword), phpStr(p.DBName), phpStr(p.DBName),
 		phpStr(p.DBUser), phpStr(p.DBName), realName)
 	wrapPath := filepath.Join(docroot, wrapName)
 	if err := os.WriteFile(wrapPath, []byte(wrapper), 0o640); err != nil {
