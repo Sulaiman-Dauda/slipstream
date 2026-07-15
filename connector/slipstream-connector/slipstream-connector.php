@@ -32,6 +32,15 @@ final class Slipstream_Connector
         if (defined('SLIPSTREAM_DISABLE_CART_FRAGMENTS') && SLIPSTREAM_DISABLE_CART_FRAGMENTS) {
             add_action('wp_enqueue_scripts', [__CLASS__, 'kill_cart_fragments'], 11);
         }
+
+        // A staging clone must never email real customers (password resets,
+        // WooCommerce order/customer mail, newsletter hooks). When the panel
+        // marks the site as staging, short-circuit outbound mail so wp_mail()
+        // reports success without sending. Gated on the environment type, so it
+        // stays safe even after Safe Push promotes this code to production.
+        if (function_exists('wp_get_environment_type') && wp_get_environment_type() === 'staging') {
+            add_filter('pre_wp_mail', '__return_true');
+        }
     }
 
     public static function kill_cart_fragments(): void
