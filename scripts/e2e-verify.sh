@@ -62,6 +62,16 @@ serves() {
 
 delete_site() { c -o /dev/null -w '%{http_code}' -X DELETE "$PANEL/api/sites/$1"; }
 
+# teardown_gone <id> -> yes|no  (delete is async: poll until GET 404s)
+teardown_gone() {
+  local id=$1
+  for ((k=0;k<60;k+=3)); do
+    [ "$(c -o /dev/null -w '%{http_code}' "$PANEL/api/sites/$id")" = 404 ] && { echo yes; return; }
+    sleep 3
+  done
+  echo no
+}
+
 echo "=================================================================="
 echo " Slipstream E2E verification — $(date -u +%FT%TZ)"
 echo " panel=$PANEL  ip=$IP"
@@ -69,34 +79,45 @@ echo "=================================================================="
 [ "$(login)" ] # ensure cookie
 echo "[login] $( [ -s "$J" ] && echo ok || echo FAILED )"
 
-# ---- per-type: create -> active -> serves 200 no-fatal -> delete -> gone ----
+# ---- per-type: create -> active -> serves -> delete(async) -> teardown gone --
+# expect: exact code, or "ok" for any non-5xx/non-fatal (empty app is fine).
+# prep: optional shell snippet run after active (e.g. drop an index.php).
 run_type() {
-  local label=$1 dom=$2 json=$3 path=${4:-/} expect=${5:-200}
+  local label=$1 dom=$2 json=$3 path=${4:-/} expect=${5:-200} prep=${6:-}
   echo "--- site type: $label ($dom) ---"
   local id; id=$(create_site "$json")
   if [ -z "$id" ]; then bad "$label: create rejected"; return; fi
   local st; st=$(wait_active "$id" 120)
   check "$label provisions" "$st" "active"
   if [ "$st" = active ]; then
+    local U; U=$(site_get "$id" | jqget "['system_user']")
+    [ -n "$prep" ] && eval "$prep"
     read -r code fatal <<<"$(serves "$dom" "$path")"
-    check "$label serves HTTP" "$code" "$expect"
+    if [ "$expect" = ok ]; then
+      if [ "$code" -lt 500 ] 2>/dev/null; then ok "$label serves ($code, app not deployed OK)"; else bad "$label serves ($code)"; fi
+    else
+      check "$label serves HTTP" "$code" "$expect"
+    fi
     check "$label no PHP fatal" "$fatal" "no"
   fi
-  local dc; dc=$(delete_site "$id")
-  check "$label deletes" "$dc" "200"
-  # confirm gone
-  local gone; gone=$(site_get "$id" | jqget "['status']")
-  check "$label teardown" "${gone:-gone}" "gone"
+  check "$label delete accepted" "$(delete_site "$id")" "202"
+  check "$label teardown completes" "$(teardown_gone "$id")" "yes"
 }
 
 run_type "static" "static.$DASH.sslip.io" \
   "{\"domain\":\"static.$DASH.sslip.io\",\"type\":\"static\"}" "/" 200
+# php: inject an index.php so we actually exercise PHP execution (empty = 403).
 run_type "php" "php.$DASH.sslip.io" \
-  "{\"domain\":\"php.$DASH.sslip.io\",\"type\":\"php\",\"php_version\":\"8.4\"}" "/" 200
+  "{\"domain\":\"php.$DASH.sslip.io\",\"type\":\"php\",\"php_version\":\"8.4\"}" "/" 200 \
+  'printf "%s" "<?php echo \"php-exec-ok\";" > /srv/sites/$dom/current/index.php; chown $U:$U /srv/sites/$dom/current/index.php'
+# proxy: stand up a real upstream so we test forwarding, not a bad-gateway.
+python3 -m http.server 9099 --bind 127.0.0.1 >/dev/null 2>&1 & PYP=$!
 run_type "proxy" "proxy.$DASH.sslip.io" \
-  "{\"domain\":\"proxy.$DASH.sslip.io\",\"type\":\"proxy\",\"proxy_upstream\":\"http://127.0.0.1:5252\"}" "/" 502
+  "{\"domain\":\"proxy.$DASH.sslip.io\",\"type\":\"proxy\",\"proxy_upstream\":\"http://127.0.0.1:9099\"}" "/" 200
+kill $PYP 2>/dev/null
+# laravel: fresh site has no app code deployed yet, so any non-5xx (200/404) is fine.
 run_type "laravel" "laravel.$DASH.sslip.io" \
-  "{\"domain\":\"laravel.$DASH.sslip.io\",\"type\":\"laravel\",\"php_version\":\"8.4\"}" "/" 200
+  "{\"domain\":\"laravel.$DASH.sslip.io\",\"type\":\"laravel\",\"php_version\":\"8.4\"}" "/" ok
 run_type "wordpress" "wp.$DASH.sslip.io" \
   "{\"domain\":\"wp.$DASH.sslip.io\",\"type\":\"wordpress\",\"php_version\":\"8.4\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\"}" "/" 200
 
@@ -136,7 +157,7 @@ if [ "$st" = active ]; then
   [ -n "$ml" ] && ok "magic login issues URL" || bad "magic login"
   # cron add / list / delete
   cr=$(c -o /dev/null -w '%{http_code}' "$PANEL/api/sites/$FID/cron" -H 'Content-Type: application/json' -d '{"schedule":"*/15 * * * *","command":"echo hi"}')
-  check "cron create accepted" "$cr" "202"
+  check "cron create accepted" "$cr" "201"
   cl=$(c "$PANEL/api/sites/$FID/cron" | jqget "|len(_)>0" 2>/dev/null || echo "")
   # purge
   pg=$(c -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/sites/$FID/purge")
@@ -145,11 +166,15 @@ if [ "$st" = active ]; then
   stg=$(c -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/sites/$FID/staging")
   check "staging clone accepted" "$stg" "202"
   sleep 20
-  delete_site "$FID" >/dev/null
+  check "feature-site delete accepted" "$(delete_site "$FID")" "202"
+  check "feature-site teardown completes" "$(teardown_gone "$FID")" "yes"
 fi
 
-# cleanup woo
-[ -n "${WID:-}" ] && delete_site "$WID" >/dev/null
+# cleanup woo (also verifies commerce-site teardown)
+if [ -n "${WID:-}" ]; then
+  check "woocommerce delete accepted" "$(delete_site "$WID")" "202"
+  check "woocommerce teardown completes" "$(teardown_gone "$WID")" "yes"
+fi
 
 echo "=================================================================="
 echo " RESULT: $PASS passed, $FAIL failed"
