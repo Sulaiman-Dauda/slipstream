@@ -140,11 +140,15 @@ func (a *Agent) CreateStaging(p rpc.StagingParams) (rpc.CreateSiteResult, error)
 				return result, fmt.Errorf("staging wp-config: %w", err)
 			}
 		}
-		if err := wpPrompt(p.DBPassword, "config", "set", "DB_PASSWORD", "--prompt=value"); err != nil {
+		// NOTE: bare "--prompt" (not "--prompt=value"): wp-cli only prompts for
+		// *named* args by name; for the positional <value> of `config set` it
+		// must be bare --prompt, which reads the value from stdin. "--prompt=value"
+		// is silently rejected (usage error) and staging creation fails.
+		if err := wpPrompt(p.DBPassword, "config", "set", "DB_PASSWORD", "--prompt"); err != nil {
 			return result, fmt.Errorf("staging wp-config password: %w", err)
 		}
 		if p.ConnectorToken != "" {
-			if err := wpPrompt(p.ConnectorToken, "config", "set", "SLIPSTREAM_SITE_TOKEN", "--prompt=value"); err != nil {
+			if err := wpPrompt(p.ConnectorToken, "config", "set", "SLIPSTREAM_SITE_TOKEN", "--prompt"); err != nil {
 				return result, fmt.Errorf("staging connector token: %w", err)
 			}
 		}
