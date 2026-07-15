@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -58,7 +59,11 @@ func (s *Server) handleImportMigration(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Agent.Call(rpc.MethodPurgeCache, rpc.PurgeParams{Site: site}, nil)
 		s.warmInBackground(site)
-		progress(100, "Migration imported and activated")
+		done := fmt.Sprintf("Migration imported and activated (%d files)", res.Files)
+		if res.Skipped > 0 {
+			done += fmt.Sprintf("; %d unsafe or special entries skipped", res.Skipped)
+		}
+		progress(100, done)
 		return nil
 	})
 	if err != nil {

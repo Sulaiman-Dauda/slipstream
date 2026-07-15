@@ -409,35 +409,75 @@ func TestRunCronRejectsInvalidIdentityAndMultilineCommand(t *testing.T) {
 	}
 }
 
-func TestMigrationArchiveRejectsTraversalAndLinks(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		header tar.Header
-	}{
-		{"traversal", tar.Header{Name: "../../etc/shadow", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg}},
-		{"symlink", tar.Header{Name: "wp-config.php", Linkname: "/etc/shadow", Typeflag: tar.TypeSymlink}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			archive := filepath.Join(t.TempDir(), "site.tar.gz")
-			f, err := os.Create(archive)
-			if err != nil {
-				t.Fatal(err)
-			}
-			gz := gzip.NewWriter(f)
-			tw := tar.NewWriter(gz)
-			if err := tw.WriteHeader(&tc.header); err != nil {
-				t.Fatal(err)
-			}
-			if tc.header.Size > 0 {
-				_, _ = tw.Write([]byte("x"))
-			}
-			_ = tw.Close()
-			_ = gz.Close()
-			_ = f.Close()
-			if _, _, err := extractMigrationArchive(archive, t.TempDir()); err == nil {
-				t.Fatal("unsafe archive was accepted")
-			}
-		})
+// writeArchive builds a .tar.gz from the given headers (payload "x" for any
+// regular file with Size > 0) and returns its path.
+func writeArchive(t *testing.T, headers ...tar.Header) string {
+	t.Helper()
+	archive := filepath.Join(t.TempDir(), "site.tar.gz")
+	f, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	for i := range headers {
+		if err := tw.WriteHeader(&headers[i]); err != nil {
+			t.Fatal(err)
+		}
+		if headers[i].Typeflag == tar.TypeReg && headers[i].Size > 0 {
+			_, _ = tw.Write([]byte("x"))
+		}
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	_ = f.Close()
+	return archive
+}
+
+// A path-traversal name must still abort the whole extraction.
+func TestMigrationArchiveRejectsTraversal(t *testing.T) {
+	archive := writeArchive(t, tar.Header{Name: "../../etc/shadow", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg})
+	if _, _, _, err := extractMigrationArchive(archive, t.TempDir()); err == nil {
+		t.Fatal("traversal archive was accepted")
+	}
+}
+
+// An escaping symlink (and a write attempted through it) must never place a
+// file outside the extraction root — but must no longer fail the migration:
+// the real files extract and the unsafe link is skipped.
+func TestMigrationArchiveSkipsEscapingLinksSafely(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	archive := writeArchive(t,
+		tar.Header{Name: "index.php", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg},
+		// Absolute-target symlink pointing outside the root.
+		tar.Header{Name: "escape", Linkname: outside, Typeflag: tar.TypeSymlink},
+		// Classic follow-through: a file whose parent is the escaping link.
+		tar.Header{Name: "escape/pwned", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg},
+		// Hardlink to an absolute system path.
+		tar.Header{Name: "hl", Linkname: "/etc/hosts", Typeflag: tar.TypeLink},
+		// A safe in-tree relative symlink is preserved.
+		tar.Header{Name: "wp-content/object-cache.php", Linkname: "../index.php", Typeflag: tar.TypeSymlink},
+	)
+	files, _, skipped, err := extractMigrationArchive(archive, dest)
+	if err != nil {
+		t.Fatalf("safe entries should extract, got error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "pwned")); err == nil {
+		t.Fatal("write escaped the extraction root through a symlink")
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "index.php")); err != nil {
+		t.Fatalf("benign file was not extracted: %v", err)
+	}
+	// The in-tree symlink is preserved; the two escaping links are skipped.
+	if fi, err := os.Lstat(filepath.Join(dest, "wp-content", "object-cache.php")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("safe in-tree symlink not preserved: %v", err)
+	}
+	if skipped < 2 {
+		t.Fatalf("expected escaping links to be skipped, skipped=%d files=%d", skipped, files)
 	}
 }
 

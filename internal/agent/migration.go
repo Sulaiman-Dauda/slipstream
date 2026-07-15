@@ -51,7 +51,7 @@ func (a *Agent) ImportMigration(p rpc.MigrationParams) (rpc.MigrationResult, err
 		return rpc.MigrationResult{}, err
 	}
 	defer os.RemoveAll(work)
-	files, size, err := extractMigrationArchive(archivePath, work)
+	files, size, skipped, err := extractMigrationArchive(archivePath, work)
 	if err != nil {
 		return rpc.MigrationResult{}, err
 	}
@@ -153,22 +153,28 @@ func (a *Agent) ImportMigration(p rpc.MigrationParams) (rpc.MigrationResult, err
 		}
 	}
 	cleanupRelease = false
-	return rpc.MigrationResult{ReleaseID: p.ReleaseID, Files: files, Bytes: size}, nil
+	return rpc.MigrationResult{ReleaseID: p.ReleaseID, Files: files, Bytes: size, Skipped: skipped}, nil
 }
 
-func extractMigrationArchive(path, dest string) (int, int64, error) {
+// inRoot reports whether an already-cleaned absolute path is dest or lives
+// beneath it — the containment invariant every extracted entry must satisfy.
+func inRoot(p, dest string) bool {
+	return p == dest || strings.HasPrefix(p, dest+string(os.PathSeparator))
+}
+
+func extractMigrationArchive(path, dest string) (int, int64, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	defer f.Close()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return 0, 0, fmt.Errorf("open migration archive: %w", err)
+		return 0, 0, 0, fmt.Errorf("open migration archive: %w", err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
-	var files int
+	var files, skipped int
 	var total int64
 	for {
 		h, err := tr.Next()
@@ -176,32 +182,32 @@ func extractMigrationArchive(path, dest string) (int, int64, error) {
 			break
 		}
 		if err != nil {
-			return files, total, err
+			return files, total, skipped, err
 		}
 		name := filepath.Clean(strings.TrimPrefix(h.Name, "./"))
 		if name == "." {
 			continue
 		}
 		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
-			return files, total, fmt.Errorf("archive path escapes destination")
+			return files, total, skipped, fmt.Errorf("archive path escapes destination")
 		}
 		target := filepath.Join(dest, name)
-		if target != dest && !strings.HasPrefix(target, dest+string(os.PathSeparator)) {
-			return files, total, fmt.Errorf("archive path escapes destination")
+		if !inRoot(target, dest) {
+			return files, total, skipped, fmt.Errorf("archive path escapes destination")
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
-				return files, total, err
+				return files, total, skipped, err
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			files++
 			total += h.Size
 			if files > maxMigrationFiles || total > maxMigrationBytes {
-				return files, total, fmt.Errorf("migration archive exceeds safety limits")
+				return files, total, skipped, fmt.Errorf("migration archive exceeds safety limits")
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return files, total, err
+				return files, total, skipped, err
 			}
 			mode := os.FileMode(0o644)
 			if h.FileInfo().Mode()&0o111 != 0 {
@@ -209,24 +215,64 @@ func extractMigrationArchive(path, dest string) (int, int64, error) {
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 			if err != nil {
-				return files, total, err
+				return files, total, skipped, err
 			}
 			_, copyErr := io.CopyN(out, tr, h.Size)
 			closeErr := out.Close()
 			if copyErr != nil {
-				return files, total, copyErr
+				return files, total, skipped, copyErr
 			}
 			if closeErr != nil {
-				return files, total, closeErr
+				return files, total, skipped, closeErr
+			}
+		case tar.TypeSymlink:
+			// Real WordPress/Laravel trees legitimately contain symlinks
+			// (object-cache.php drop-ins, vendored packages). Recreate only
+			// those whose target stays inside the extraction root; anything
+			// pointing outside (an absolute old-host path, or ../ past the
+			// root) is skipped, not followed — this preserves the tar
+			// symlink-escape protection while no longer failing the whole
+			// migration over one ordinary drop-in link.
+			linkFull := h.Linkname
+			if !filepath.IsAbs(linkFull) {
+				linkFull = filepath.Join(filepath.Dir(target), h.Linkname)
+			}
+			if !inRoot(filepath.Clean(linkFull), dest) {
+				skipped++
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return files, total, skipped, err
+			}
+			if err := os.Symlink(h.Linkname, target); err != nil && !os.IsExist(err) {
+				return files, total, skipped, err
+			}
+		case tar.TypeLink:
+			// Hardlink to another archive member. Only allowed when the
+			// source already resolves inside the root; a link to an absolute
+			// system path would smuggle its contents into the release.
+			srcFull := filepath.Clean(filepath.Join(dest, h.Linkname))
+			if !inRoot(srcFull, dest) {
+				skipped++
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return files, total, skipped, err
+			}
+			if err := os.Link(srcFull, target); err != nil {
+				// Out-of-order or missing source: skip rather than abort.
+				skipped++
 			}
 		default:
-			return files, total, fmt.Errorf("archive contains unsupported link or special file %q", h.Name)
+			// Devices, FIFOs and other special files have no place in a
+			// web-site release; skip them without aborting the migration.
+			skipped++
 		}
 	}
 	if files == 0 {
-		return 0, 0, fmt.Errorf("migration archive is empty")
+		return 0, 0, skipped, fmt.Errorf("migration archive is empty")
 	}
-	return files, total, nil
+	return files, total, skipped, nil
 }
 
 func migrationSourceRoot(work string) (string, error) {
