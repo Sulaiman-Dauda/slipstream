@@ -120,6 +120,12 @@ func (a *Agent) WPUpdate(p rpc.WPParams) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("unknown update target %q", p.What)
 	}
+	// Reload PHP-FPM so OPcache picks up the updated files immediately. Without
+	// this, workers keep serving the pre-update bytecode until the next
+	// revalidation window (revalidate_freq), which can fatal a site when the
+	// update changed function signatures or removed files that cached bytecode
+	// still references.
+	a.reloadPHPFPM(ctx, p.Site.PHPVersion)
 	return map[string]string{"updated": p.What}, nil
 }
 
