@@ -100,8 +100,25 @@ server {
 	}
 	a.Runner.Run(ctx, "chgrp", "slipstream", "/etc/slipstream/certs/panel.key", "/etc/slipstream/certs/panel.pem")
 
-	// Restart the API so it picks up the new certificate.
-	a.Runner.Run(ctx, "systemctl", "restart", "slipstream-api")
+	// nginx terminates the public HTTPS connection using panel.pem, but it
+	// reads the certificate into worker memory at reload time — writing the
+	// new file does nothing until nginx is reloaded. Without this the panel
+	// keeps presenting the old (self-signed) certificate until some unrelated
+	// reload happens.
+	if err := a.reloadNginx(); err != nil {
+		return nil, fmt.Errorf("reload nginx with new panel certificate: %w", err)
+	}
+
+	// The API reads its own TLS material once at startup (for direct :port
+	// access), so it must restart to present the new certificate there too.
+	// Do it DETACHED: restarting slipstream-api from inside this RPC would
+	// kill the very API call that is awaiting our response, and the task would
+	// be recorded as "failed: interrupted by panel restart" even though the
+	// certificate was issued and installed successfully. Handing the restart
+	// to a transient systemd unit lets this RPC return first; the public
+	// endpoint is already live on the new cert via the nginx reload above.
+	a.Runner.Run(ctx, "systemd-run", "--collect", "--unit=slipstream-panel-cert-restart",
+		"/bin/sh", "-c", "sleep 2; systemctl restart slipstream-api")
 	return map[string]string{"domain": p.Domain, "status": "issued"}, nil
 }
 
