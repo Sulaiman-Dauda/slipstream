@@ -191,11 +191,44 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "malformed request")
 		return
 	}
-	for key, value := range req {
+	for key := range req {
 		if !editableSettings[key] {
 			respondErr(w, http.StatusBadRequest, "unknown setting "+key)
 			return
 		}
+	}
+	// A restic repository is encrypted with whatever password was current at
+	// init time; changing backup_password (or backup_repository) here only
+	// changes what Slipstream will TRY next time -- it does not re-key the
+	// actual repository. Confirmed live: changing backup_password to a new
+	// value the operator believed was just "updating" it silently locked the
+	// panel out of every existing backup with no warning at the time of the
+	// change -- the failure only surfaced later, misleadingly, as "config
+	// file already exists" on the next scheduled backup (ensureRepo's `cat
+	// config` failed on the wrong password, then `init` correctly refused to
+	// clobber a repo that already exists). Validate the EFFECTIVE
+	// repository+password pairing against the real repository before
+	// accepting either field, the same way handleBackupTest already does.
+	_, changingRepo := req["backup_repository"]
+	_, changingPassword := req["backup_password"]
+	if changingRepo || changingPassword {
+		repo := req["backup_repository"]
+		if !changingRepo {
+			repo, _ = s.Store.GetSetting("backup_repository", "")
+		}
+		password := req["backup_password"]
+		if !changingPassword || strings.Contains(password, "•") {
+			password, _ = s.Store.GetSetting("backup_password", "")
+		}
+		if repo != "" && password != "" {
+			var out map[string]any
+			if err := s.Agent.Call(rpc.MethodTestBackup, rpc.BackupParams{Repository: repo, Password: password}, &out); err != nil {
+				respondErr(w, http.StatusBadRequest, "this repository/password pairing does not work, refusing to save (existing backups would become unreachable): "+err.Error())
+				return
+			}
+		}
+	}
+	for key, value := range req {
 		if key == "backup_password" && strings.Contains(value, "•") {
 			continue // masked round-trip, not a change
 		}

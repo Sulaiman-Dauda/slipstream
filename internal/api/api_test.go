@@ -696,6 +696,52 @@ func TestRenderedCrontabEscapesPercent(t *testing.T) {
 	}
 }
 
+// A restic repository is encrypted with whatever password was current at
+// init time -- changing backup_password here does not re-key it. Without
+// validation, an operator could silently lock the panel out of every
+// existing backup by "just updating" the password, with the failure only
+// surfacing later, misleadingly, on the next scheduled backup attempt.
+func TestSettingsRejectsBadBackupPassword(t *testing.T) {
+	s, agent, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+
+	resp, body := c.do("PUT", "/api/settings", map[string]string{
+		"backup_repository": "/var/backups/repo", "backup_password": "correct-horse",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("initial settings save = %d %s", resp.StatusCode, body)
+	}
+	if !agent.called(rpc.MethodTestBackup) {
+		t.Fatal("expected the initial repo+password pairing to be validated")
+	}
+
+	agent.errs[rpc.MethodTestBackup] = fmt.Errorf("wrong password or no key found")
+	resp, body = c.do("PUT", "/api/settings", map[string]string{"backup_password": "a-different-password"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad password change = %d %s, want 400", resp.StatusCode, body)
+	}
+	stored, _ := s.Store.GetSetting("backup_password", "")
+	if stored != "correct-horse" {
+		t.Errorf("password changed to %q despite failed validation", stored)
+	}
+
+	delete(agent.errs, rpc.MethodTestBackup)
+	resp, body = c.do("PUT", "/api/settings", map[string]string{"backup_password": "a-different-password"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("valid password change = %d %s", resp.StatusCode, body)
+	}
+	stored, _ = s.Store.GetSetting("backup_password", "")
+	if stored != "a-different-password" {
+		t.Errorf("password = %q, want the new value once validation passes", stored)
+	}
+
+	// Clearing the repository must never be blocked by validation.
+	resp, body = c.do("PUT", "/api/settings", map[string]string{"backup_repository": ""})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clearing backup_repository = %d %s", resp.StatusCode, body)
+	}
+}
+
 func TestSettingsRoundTrip(t *testing.T) {
 	s, _, ts := testServer(t)
 	c := setupAdmin(t, s, ts)
