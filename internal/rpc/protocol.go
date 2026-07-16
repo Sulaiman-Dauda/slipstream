@@ -51,7 +51,6 @@ const (
 	MethodPurgeCache       = "PurgeCache"
 	MethodReloadWebServer  = "ReloadWebServer"
 	MethodCheckDrift       = "CheckDrift"
-	MethodRestoreManaged   = "RestoreManagedFile"
 
 	// v1.1 / v1.2
 	MethodRestartService  = "RestartService"
