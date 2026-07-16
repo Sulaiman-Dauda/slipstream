@@ -65,10 +65,12 @@ func (a *Agent) FirewallRule(p rpc.FirewallRuleParams) (map[string]string, error
 		}
 	}
 
-	// Never let the panel deny the SSH port — that's an un-recoverable
-	// lockout with no in-band way back in.
-	if p.Action == "deny" && (p.Port == 22 || p.Port == sshPort()) {
-		return nil, fmt.Errorf("refusing to deny the SSH port (%d) — you would lock yourself out", p.Port)
+	// Never let the panel deny the SSH port, or delete its allow rule --
+	// both are an un-recoverable lockout with no in-band way back in. UFW's
+	// default incoming policy is deny, so removing the "allow 22/tcp" rule
+	// cuts off SSH exactly as surely as adding an explicit deny would.
+	if (p.Action == "deny" || p.Action == "delete") && (p.Port == 22 || p.Port == sshPort()) {
+		return nil, fmt.Errorf("refusing to remove access to the SSH port (%d) — you would lock yourself out", p.Port)
 	}
 
 	ctx := context.Background()
