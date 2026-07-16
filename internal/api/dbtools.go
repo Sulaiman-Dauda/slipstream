@@ -14,7 +14,17 @@ import (
 var readOnlyPrefixes = []string{"select", "show", "describe", "desc", "explain", "with"}
 
 func isReadOnlySQL(sql string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(sql))
+	// The agent runs this through `mariadb -e`, whose CLI happily executes
+	// multiple semicolon-separated statements in one call. A prefix check
+	// alone is bypassable: "select 1; drop table x;" starts with "select "
+	// but stacks a write straight past this gate. So a read-only query must
+	// be exactly one statement -- reject anything with an embedded semicolon
+	// (a single optional trailing one is fine) before even checking the verb.
+	body := strings.TrimRight(strings.TrimSpace(sql), ";")
+	if strings.Contains(body, ";") {
+		return false
+	}
+	trimmed := strings.ToLower(body)
 	for _, p := range readOnlyPrefixes {
 		if strings.HasPrefix(trimmed, p+" ") || trimmed == p {
 			return true
