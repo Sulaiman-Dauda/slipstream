@@ -31,8 +31,20 @@ func (a *Agent) restic(ctx context.Context, password string, args ...string) (st
 	return strings.TrimSpace(out.String()), nil
 }
 
-// ensureRepo initializes the repository on first use.
+// ensureRepo initializes the repository on first use. Serialized by repoMu:
+// multiple sites share one repository, and their scheduled backups can fire
+// in the same tick. A first attempt at fixing this just re-checked "cat
+// config" after a failed "init" (treating "already exists" as someone else
+// having won the race) -- that is NOT enough. Confirmed live: with real
+// concurrent callers, two genuinely simultaneous `restic init` runs against
+// the same fresh path don't fail cleanly, they corrupt the repository (both
+// processes write config/key material concurrently) -- every subsequent
+// call, from any site, failed permanently with "config or key ... is
+// damaged: ciphertext verification failed", including ones running long
+// after the race. Only real mutual exclusion prevents that.
 func (a *Agent) ensureRepo(ctx context.Context, repo, password string) error {
+	a.repoMu.Lock()
+	defer a.repoMu.Unlock()
 	if _, err := a.restic(ctx, password, "-r", repo, "cat", "config"); err == nil {
 		return nil
 	}

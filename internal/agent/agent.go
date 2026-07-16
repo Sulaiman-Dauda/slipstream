@@ -66,6 +66,7 @@ type Agent struct {
 	Renderer engine.Renderer
 	Log      *slog.Logger
 	certMu   sync.Mutex // certbot permits only one process against its state
+	repoMu   sync.Mutex // concurrent `restic init` against the same repo corrupts it
 }
 
 // New creates an agent with production defaults.
