@@ -28,6 +28,13 @@ func warmClient() *http.Client {
 			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 			DisableKeepAlives: false,
 			MaxIdleConns:      4,
+			// The cache's fastcgi_cache_key is encoding-normalized ($slip_enc)
+			// so a gzip response and a plain response are two DIFFERENT cache
+			// entries. Go's default transport auto-negotiates Accept-Encoding
+			// and hides it from callers, so warming would silently populate
+			// only the gzip variant. DisableCompression lets warmRequest
+			// below control the header explicitly for both passes.
+			DisableCompression: true,
 		},
 		// Do not follow redirects into other hosts; we only warm this site.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -63,33 +70,48 @@ func (a *Agent) WarmCache(p rpc.WarmParams) (rpc.WarmResult, error) {
 
 	var res rpc.WarmResult
 	for _, u := range urls {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://127.0.0.1"+pathOf(u, host), nil)
-		if err != nil {
-			continue
-		}
-		req.Host = host
-		req.Header.Set("User-Agent", "Slipstream-CacheWarmer/1.0")
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 2<<20))
-		cacheHdr := resp.Header.Get("X-Slipstream-Cache")
-		resp.Body.Close()
+		path := pathOf(u, host)
+		// Warm the plain (non-gzip) cache entry too -- a distinct cache key
+		// from the gzip one below -- so clients that don't advertise gzip
+		// support (health checks, older bots, plain curl) don't always hit a
+		// cold render. Best-effort: not reflected in Cached, which tracks
+		// the gzip variant almost all real browser traffic actually uses.
+		warmRequest(client, host, path, "")
+
+		gzipHit := warmRequest(client, host, path, "gzip")
 		res.Warmed++
-		// A second request confirms it is now cached.
-		if req2, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://127.0.0.1"+pathOf(u, host), nil); err == nil {
-			req2.Host = host
-			if resp2, err := client.Do(req2); err == nil {
-				io.Copy(io.Discard, io.LimitReader(resp2.Body, 2<<20))
-				if resp2.Header.Get("X-Slipstream-Cache") == "HIT" || cacheHdr == "HIT" {
-					res.Cached++
-				}
-				resp2.Body.Close()
-			}
+		if gzipHit {
+			res.Cached++
+		} else if warmRequest(client, host, path, "gzip") {
+			// The first gzip pass just populated the cache; confirm on it.
+			res.Cached++
 		}
 	}
 	return res, nil
+}
+
+// warmRequest issues one request for a specific Accept-Encoding value and
+// reports whether it came back a cache HIT. acceptEncoding == "" omits the
+// header entirely (DisableCompression on the client means Go never adds it
+// implicitly), matching a client with no gzip support.
+func warmRequest(client *http.Client, host, path, acceptEncoding string) bool {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://127.0.0.1"+path, nil)
+	if err != nil {
+		return false
+	}
+	req.Host = host
+	req.Header.Set("User-Agent", "Slipstream-CacheWarmer/1.0")
+	if acceptEncoding != "" {
+		req.Header.Set("Accept-Encoding", acceptEncoding)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 2<<20))
+	hit := resp.Header.Get("X-Slipstream-Cache") == "HIT"
+	resp.Body.Close()
+	return hit
 }
 
 // wordpressURLs asks wp-cli for published post and page permalinks.
