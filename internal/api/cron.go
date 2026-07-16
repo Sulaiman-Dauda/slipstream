@@ -98,10 +98,14 @@ func (s *Server) handleDeleteCron(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Record which site/job was removed -- an empty subject here left the
+	// audit trail unable to answer "which cron job did admin X delete?".
+	siteDomain := ""
 	if site, err := s.Store.GetSite(job.SiteID); err == nil {
 		s.renderCrontab(site)
+		siteDomain = site.Domain
 	}
-	s.Store.Audit(s.actor(r), "cron.delete", "", "")
+	s.Store.Audit(s.actor(r), "cron.delete", siteDomain, job.Schedule+" "+job.Command)
 	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
