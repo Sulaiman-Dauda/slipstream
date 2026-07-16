@@ -223,12 +223,14 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	users, _ := s.Store.ListUsers()
 	adminCount := 0
 	targetIsAdmin := false
+	targetEmail := ""
 	for _, user := range users {
 		if user.Role == "admin" {
 			adminCount++
 		}
 		if user.ID == id {
 			targetIsAdmin = user.Role == "admin"
+			targetEmail = user.Email
 		}
 	}
 	if targetIsAdmin && adminCount <= 1 {
@@ -239,7 +241,9 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.Store.Audit(s.actor(r), "user.delete", "", "")
+	// Record who was deleted, not just who did the deleting -- without this
+	// the audit trail can't answer "which account did admin X remove?".
+	s.Store.Audit(s.actor(r), "user.delete", targetEmail, "")
 	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

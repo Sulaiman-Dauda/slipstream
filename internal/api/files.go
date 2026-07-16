@@ -187,7 +187,11 @@ func (s *Server) handleAddSSHKey(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	s.Store.Audit(s.actor(r), "sftp.key.add", site.Domain, "")
+	fingerprint := ""
+	if len(res.Keys) > 0 {
+		fingerprint = res.Keys[len(res.Keys)-1].Fingerprint
+	}
+	s.Store.Audit(s.actor(r), "sftp.key.add", site.Domain, fingerprint)
 	respond(w, http.StatusCreated, res)
 }
 

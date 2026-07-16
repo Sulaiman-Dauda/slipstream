@@ -100,7 +100,13 @@ func (s *Server) handleFirewallRule(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	s.Store.Audit(s.actor(r), "firewall.rule", req.Action, "")
+	// Record which port/proto changed, not just the verb -- "firewall.rule:
+	// allow" with no detail can't answer "who opened which port".
+	detail := out["rule"]
+	if req.From != "" {
+		detail += " from " + req.From
+	}
+	s.Store.Audit(s.actor(r), "firewall.rule", detail, "")
 	respond(w, http.StatusOK, out)
 }
 
