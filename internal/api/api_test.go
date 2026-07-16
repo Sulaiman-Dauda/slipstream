@@ -171,6 +171,36 @@ func TestSetupAndAuthFlow(t *testing.T) {
 	}
 }
 
+// Setup-token edge cases not exercised by TestSetupAndAuthFlow: an expired
+// token and a garbage/wrong token, both against a fresh store with no admin
+// yet (so these hit ConsumeSetupToken's own rejection, not the separate
+// "setup already complete" user-count guard).
+func TestSetupTokenExpiryAndGarbage(t *testing.T) {
+	s, _, ts := testServer(t)
+
+	if err := s.Store.CreateSetupToken("expired-token", -time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	c := &client{t: t, base: ts.URL}
+	if resp, body := c.do("POST", "/api/setup", map[string]string{
+		"email": "admin@example.com", "password": "a-long-password!", "token": "expired-token",
+	}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expired token = %d %s, want 403", resp.StatusCode, body)
+	}
+	if n, _ := s.Store.CountUsers(); n != 0 {
+		t.Fatal("expired token setup must not create a user")
+	}
+
+	if resp, body := c.do("POST", "/api/setup", map[string]string{
+		"email": "admin@example.com", "password": "a-long-password!", "token": "never-issued",
+	}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("garbage token = %d %s, want 403", resp.StatusCode, body)
+	}
+	if n, _ := s.Store.CountUsers(); n != 0 {
+		t.Fatal("garbage token setup must not create a user")
+	}
+}
+
 func TestConnectorRoutesExposeOnlyConnectorSurface(t *testing.T) {
 	s, _, _ := testServer(t)
 	ts := httptest.NewServer(s.ConnectorRoutes())
