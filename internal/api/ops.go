@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 )
@@ -41,8 +42,26 @@ func (s *Server) handleReadLog(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	site := r.URL.Query().Get("site")
 	if user, _ := s.sessionUser(r); user.Role == "operator" {
+		// Global sources (nginx-access, nginx-error, mariadb, agent, api,
+		// php-error) cover every site and the panel's own control-plane
+		// traffic -- never scoped to a single site, so an operator must
+		// never see them regardless of what "site" they pass. Without this,
+		// checking only "does the operator own this site domain" let an
+		// operator request source=nginx-access alongside a site they DO own
+		// and read every other tenant's traffic plus the panel's own access
+		// log (which lines admin API calls -- effectively an authz bypass).
+		if !strings.HasPrefix(source, "site:") {
+			respondErr(w, http.StatusForbidden, "server-wide logs require admin access")
+			return
+		}
 		managed, err := s.Store.GetSiteByDomain(site)
 		if err != nil || !s.canAccessSite(r, managed.ID) {
+			respondErr(w, http.StatusNotFound, "log not found")
+			return
+		}
+		// Defense in depth: the source string must actually name the same
+		// site that was just permission-checked, not some other domain.
+		if !strings.HasPrefix(source, "site:"+site+":") {
 			respondErr(w, http.StatusNotFound, "log not found")
 			return
 		}
