@@ -409,6 +409,7 @@ func (s *Server) handleUpdateSiteConfig(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	previous := site
 	var req updateConfigRequest
 	if err := decode(r, &req); err != nil {
 		respondErr(w, http.StatusBadRequest, "malformed request")
@@ -442,6 +443,10 @@ func (s *Server) handleUpdateSiteConfig(w http.ResponseWriter, r *http.Request) 
 		progress(40, "Re-rendering configuration for "+site.Domain)
 		var res rpc.ApplyResult
 		if err := s.Agent.Call(rpc.MethodApplySiteConfig, rpc.SiteRef{Site: site}, &res); err != nil {
+			// The agent never actually applied these settings -- revert the
+			// stored record rather than leave it claiming a config that was
+			// never rendered (see the identical fix in handlePHPSettings).
+			s.Store.UpdateSite(previous)
 			return err
 		}
 		for _, f := range res.Files {
