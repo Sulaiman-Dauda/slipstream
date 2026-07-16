@@ -195,10 +195,7 @@ func (a *Agent) CacheStats(p rpc.WPParams) (rpc.CacheStatsResult, error) {
 	// Which backend is active?
 	if _, err := os.Lstat(dropinPath(p.Site)); err == nil {
 		res.Backend = "apcu"
-		// Read APCu stats via a tiny PHP program run as the site user.
-		out, err := a.Runner.Run(ctx, "runuser", "-u", p.Site.SystemUser, "--",
-			"php", "-r", "$i=apcu_cache_info(true);$s=apcu_sma_info(true);echo json_encode(['hits'=>$i['num_hits']??0,'misses'=>$i['num_misses']??0,'entries'=>$i['num_entries']??0,'mem_used'=>($s['seg_size']??0)-($s['avail_mem']??0),'mem_total'=>$s['seg_size']??0]);")
-		if err == nil {
+		if out := a.readAPCuStats(ctx, p.Site); out != "" {
 			json.Unmarshal([]byte(out), &res)
 		}
 	} else if out, err := a.wp(ctx, p.Site, "redis", "status"); err == nil && strings.Contains(out, "Status: Connected") {
@@ -208,4 +205,39 @@ func (a *Agent) CacheStats(p rpc.WPParams) (rpc.CacheStatsResult, error) {
 		res.HitRatePct = int(float64(res.Hits) * 100 / float64(res.HitsPlusMisses()))
 	}
 	return res, nil
+}
+
+// apcuStatsScript is gated to loopback only: it is reachable at a
+// predictable URL in every WP/WooCommerce docroot, so anything but a
+// same-host caller must get nothing back.
+const apcuStatsScript = `<?php
+if (($_SERVER['REMOTE_ADDR'] ?? '') !== '127.0.0.1') { http_response_code(403); exit; }
+if (!function_exists('apcu_cache_info')) { echo json_encode(['error' => 'apcu unavailable']); exit; }
+$i = @apcu_cache_info(true);
+$s = @apcu_sma_info(true);
+echo json_encode([
+    'hits' => $i['num_hits'] ?? 0,
+    'misses' => $i['num_misses'] ?? 0,
+    'entries' => $i['num_entries'] ?? 0,
+    'mem_used' => ($s['seg_size'] ?? 0) - ($s['avail_mem'] ?? 0),
+    'mem_total' => $s['seg_size'] ?? 0,
+]);
+`
+
+// readAPCuStats fetches live APCu numbers through an actual HTTP request
+// into the site's own PHP-FPM pool. A separate `php -r` CLI process cannot
+// see this data at all: APCu's shared memory is inherited via fork() from
+// the FPM master by its worker children, but a freestanding CLI invocation
+// is a different process tree entirely and gets its own empty instance (or,
+// with apc.enable_cli left at its default off, no instance at all) --
+// confirmed live: `php -r 'apcu_cache_info(...)'` as the site user emits
+// "No APC info available. Perhaps APC is not enabled?" regardless of how
+// much real traffic the site's actual pool has served.
+func (a *Agent) readAPCuStats(ctx context.Context, site state.Site) string {
+	script := filepath.Join(site.RootPath, "current", "slipstream-cache-stats.php")
+	if err := os.WriteFile(script, []byte(apcuStatsScript), 0o644); err != nil {
+		return ""
+	}
+	a.Runner.Run(ctx, "chown", site.SystemUser+":"+site.SystemUser, script)
+	return a.fetch(warmClient(), site.Domain, "/slipstream-cache-stats.php")
 }
