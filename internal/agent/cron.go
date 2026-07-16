@@ -80,7 +80,14 @@ func (a *Agent) RunCron(p rpc.RunCronParams) (rpc.RunCronResult, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "runuser", "-u", p.SystemUser, "--", "/bin/sh", "-c", p.Command)
+	// -l (login) makes runuser chdir to the site user's home (the site root)
+	// and set up its environment the same way crond does when it actually
+	// runs this job on schedule. Without it, "Run Now" executes with
+	// whatever cwd the agent process happens to have -- so any command using
+	// a site-relative path (e.g. "php current/artisan schedule:run") fails
+	// here even though the real scheduled run succeeds, misleading the
+	// operator into thinking a perfectly working cron job is broken.
+	cmd := exec.CommandContext(ctx, "runuser", "-l", p.SystemUser, "-s", "/bin/sh", "-c", p.Command)
 	output := tailWriter{max: 64 << 10}
 	cmd.Stdout, cmd.Stderr = &output, &output
 	err := cmd.Run()
