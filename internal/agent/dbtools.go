@@ -53,6 +53,13 @@ func (a *Agent) DBExport(p rpc.DBExportParams) (rpc.DBExportResult, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return rpc.DBExportResult{}, err
 	}
+	// MkdirAll runs as the root agent, so a freshly created dir is root:root
+	// like every other directory the site user can't traverse -- unlike
+	// "uploads" and the rest of "shared", which are chowned at site creation.
+	// Without this the exported file (chowned below) is unreachable via the
+	// site's own SFTP login even though it displays fine through the panel,
+	// which reads it as root.
+	a.Runner.Run(context.Background(), "chown", p.Site.SystemUser+":"+p.Site.SystemUser, dir)
 	name := fmt.Sprintf("%s-%s.sql", p.Database, time.Now().UTC().Format("20060102-150405"))
 	dest := filepath.Join(dir, name)
 	// Stream the dump straight to disk — a multi-GB database must not be
