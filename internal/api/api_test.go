@@ -20,15 +20,20 @@ import (
 
 // fakeAgent implements AgentCaller with canned results per method.
 type fakeAgent struct {
-	mu      sync.Mutex
-	calls   []string
-	results map[string]any
-	errs    map[string]error
+	mu         sync.Mutex
+	calls      []string
+	lastParams map[string]any
+	results    map[string]any
+	errs       map[string]error
 }
 
 func (f *fakeAgent) Call(method string, params any, out any) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, method)
+	if f.lastParams == nil {
+		f.lastParams = map[string]any{}
+	}
+	f.lastParams[method] = params
 	f.mu.Unlock()
 	if err := f.errs[method]; err != nil {
 		return err
@@ -641,6 +646,53 @@ func TestAuditRecordsDeletionTargets(t *testing.T) {
 	}
 	if !sawUserDelete {
 		t.Error("no user.delete audit event found")
+	}
+}
+
+// crontab(5): an unescaped "%" in a job's command field becomes a newline,
+// and everything after the first one is fed to the command as stdin instead
+// of running. Our own timestamp-wrapper printf format strings contain
+// literal %s, so the rendered crontab must never reach WriteCrontab with an
+// unescaped "%" anywhere in a job line -- that silently truncated every
+// rendered cron job (confirmed live: cron fired every minute per syslog, but
+// the wrapped command never actually ran).
+func TestRenderedCrontabEscapesPercent(t *testing.T) {
+	s, agent, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+
+	resp, body := c.do("POST", "/api/sites", map[string]any{"domain": "crontest.example.com", "type": "static"})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create site = %d %s", resp.StatusCode, body)
+	}
+	waitForTasks(t, s)
+	site, err := s.Store.GetSiteByDomain("crontest.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body = c.do("POST", fmt.Sprintf("/api/sites/%d/cron", site.ID), map[string]string{
+		"schedule": "*/5 * * * *", "command": "echo 'date fmt %Y-%m-%d also 100% done'",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create cron = %d %s", resp.StatusCode, body)
+	}
+
+	agent.mu.Lock()
+	params, ok := agent.lastParams[rpc.MethodWriteCrontab].(rpc.CrontabParams)
+	agent.mu.Unlock()
+	if !ok {
+		t.Fatal("WriteCrontab was not called with CrontabParams")
+	}
+	for i, line := range strings.Split(params.Content, "\n") {
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "PATH=") || line == "" {
+			continue
+		}
+		// Walk the line looking for a "%" not preceded by a backslash.
+		for j := 0; j < len(line); j++ {
+			if line[j] == '%' && (j == 0 || line[j-1] != '\\') {
+				t.Fatalf("line %d has an unescaped %%, cron would truncate the job here: %q", i, line)
+			}
+		}
 	}
 }
 

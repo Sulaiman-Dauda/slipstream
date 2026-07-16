@@ -152,7 +152,19 @@ func (s *Server) renderCrontab(site state.Site) error {
 		logPath := fmt.Sprintf("%s/logs/cron-%d.log", site.RootPath, j.ID)
 		script := fmt.Sprintf("printf '\\n[slipstream start %%s]\\n' \"$(date -Is)\"; { %s; }; status=$?; printf '[slipstream end %%s status=%%s]\\n' \"$(date -Is)\" \"$status\"; exit \"$status\"", j.Command)
 		rotate := fmt.Sprintf("status=$?; tail -n 500 %s > %s.tmp && mv %s.tmp %s; exit $status", shellQuote(logPath), shellQuote(logPath), shellQuote(logPath), shellQuote(logPath))
-		fmt.Fprintf(&b, "%s /bin/sh -c %s >> %s 2>&1; %s\n", j.Schedule, shellQuote(script), shellQuote(logPath), rotate)
+		line := fmt.Sprintf("/bin/sh -c %s >> %s 2>&1; %s", shellQuote(script), shellQuote(logPath), rotate)
+		// crontab(5): an unescaped "%" in the command field becomes a
+		// newline, and everything after the first one is fed to the command
+		// as stdin instead of being part of it. Our own timestamp wrapper's
+		// printf format strings contain literal %s -- unescaped, that
+		// silently truncated EVERY rendered job at "[slipstream start ",
+		// leaving a syntactically broken fragment that cron ran instead
+		// (confirmed live: the job fired every minute per syslog, but never
+		// created its log file or ran the user's command at all). This must
+		// escape the whole command field, not just our wrapper, since a
+		// user's own command can just as easily contain a literal "%".
+		line = strings.ReplaceAll(line, "%", "\\%")
+		fmt.Fprintf(&b, "%s %s\n", j.Schedule, line)
 	}
 	return s.Agent.Call(rpc.MethodWriteCrontab, rpc.CrontabParams{
 		SystemUser: site.SystemUser, Content: b.String(),
