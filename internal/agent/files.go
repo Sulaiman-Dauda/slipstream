@@ -68,9 +68,20 @@ func (a *Agent) ListFiles(p rpc.ListFilesParams) (rpc.ListFilesResult, error) {
 		if err != nil {
 			continue
 		}
+		isDir := e.IsDir()
+		if info.Mode()&os.ModeSymlink != 0 {
+			// A symlink's own Lstat mode is never a directory, so entries like
+			// the site's "current" release pointer would otherwise show up as
+			// a plain file instead of something the browser can open. Follow
+			// it to report what it actually points at; a dangling or
+			// non-directory target just stays a file.
+			if target, err := os.Stat(filepath.Join(full, e.Name())); err == nil {
+				isDir = target.IsDir()
+			}
+		}
 		res.Entries = append(res.Entries, rpc.FileEntry{
 			Name:    e.Name(),
-			IsDir:   e.IsDir(),
+			IsDir:   isDir,
 			Size:    info.Size(),
 			Mode:    info.Mode().String(),
 			ModTime: info.ModTime().UTC().Format(time.RFC3339),
@@ -215,6 +226,13 @@ func (a *Agent) ManageFile(p rpc.ManageFileParams) (map[string]string, error) {
 	full, err := resolveInSite(p.Site.RootPath, p.RelPath)
 	if err != nil {
 		return nil, err
+	}
+	// RelPath values like "/", ".", or "//" all clean down to the site root
+	// itself — the emptiness check above only catches the literal empty
+	// string, not these equivalent forms. Without this, "delete" with
+	// path="/" resolves here and os.RemoveAll wipes the entire site.
+	if root := filepath.Clean(p.Site.RootPath); full == root {
+		return nil, fmt.Errorf("site root cannot be modified")
 	}
 	switch p.Operation {
 	case "mkdir":

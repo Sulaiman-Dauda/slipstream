@@ -93,6 +93,55 @@ func TestManagedFileWorkflow(t *testing.T) {
 	}
 }
 
+// A RelPath that cleans down to the site root (not just the literal empty
+// string) must never reach a destructive operation — "/" and "." both
+// resolve to RootPath via resolveInSite, and a bare emptiness check on
+// RelPath does not catch them.
+func TestManageFileRejectsRootPathVariants(t *testing.T) {
+	a, _ := testAgent(t)
+	site := staticSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: site}); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"delete", "mkdir"} {
+		for _, rel := range []string{"/", ".", "//", "/."} {
+			if _, err := a.ManageFile(rpc.ManageFileParams{Site: site, Operation: op, RelPath: rel}); err == nil {
+				t.Fatalf("%s on RelPath %q against site root was not rejected", op, rel)
+			}
+		}
+	}
+	if _, err := os.Stat(site.RootPath); err != nil {
+		t.Fatalf("site root should still exist: %v", err)
+	}
+}
+
+// ListFiles must report a symlink-to-a-directory (the site's "current"
+// release pointer, in production) as a directory, not a plain file — the
+// raw Lstat mode from ReadDir reflects the symlink itself, not its target.
+func TestListFilesFollowsSymlinkForIsDir(t *testing.T) {
+	a, _ := testAgent(t)
+	site := staticSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: site}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := a.ListFiles(rpc.ListFilesParams{Site: site, RelPath: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range res.Entries {
+		if e.Name == "current" {
+			found = true
+			if !e.IsDir {
+				t.Error("current (symlink to releases/initial) reported as a file, not a directory")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("current entry not listed")
+	}
+}
+
 func TestSSHKeyWorkflow(t *testing.T) {
 	a, _ := testAgent(t)
 	site := staticSite(a)
