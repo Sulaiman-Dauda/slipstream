@@ -53,7 +53,7 @@ func TestRateLimiter(t *testing.T) {
 }
 
 func TestReadOnlySQLGuard(t *testing.T) {
-	ro := []string{"SELECT * FROM x", "  show tables", "DESCRIBE y", "with t as (select 1) select * from t"}
+	ro := []string{"SELECT * FROM x", "  show tables", "DESCRIBE y", "with t as (select 1) select * from t", "select 1;"}
 	for _, q := range ro {
 		if !isReadOnlySQL(q) {
 			t.Errorf("%q should be read-only", q)
@@ -63,6 +63,21 @@ func TestReadOnlySQLGuard(t *testing.T) {
 	for _, q := range rw {
 		if isReadOnlySQL(q) {
 			t.Errorf("%q should NOT be read-only", q)
+		}
+	}
+	// The agent runs the query through `mariadb -e`, which executes stacked
+	// statements: "select 1; drop table x;" starts with "select " but smuggles
+	// a write straight past a prefix-only check. A read-only query must be
+	// exactly one statement.
+	stacked := []string{
+		"select 1; drop table x;",
+		"select 1; create table stack_bypass(id int);",
+		"show tables; delete from x;",
+		"select 1;select 2;",
+	}
+	for _, q := range stacked {
+		if isReadOnlySQL(q) {
+			t.Errorf("stacked statement %q should NOT be read-only", q)
 		}
 	}
 }
