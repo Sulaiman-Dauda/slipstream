@@ -57,13 +57,17 @@ type DatabaseConfig struct {
 	TLS      bool   `json:"tls"`
 }
 
-// Resources are per-site limits enforced through systemd/cgroup v2.
+// Resources are the per-site sizing inputs that actually take effect today.
+// MemoryHighMB sizes PHP-FPM's pm.max_children (a soft heuristic cap, not a
+// hard memory limit); PHPWorkers directly overrides that worker count. There
+// is deliberately no CPU/hard-memory/DB-connection quota field here: this
+// codebase has no per-site cgroup or systemd-slice enforcement mechanism, and
+// a field an operator can never actually reach through the API (no such
+// fields exist in the CreateSite request) is worse than no field at all --
+// it invites building on a guarantee that was never real.
 type Resources struct {
-	CPUWeight     int `json:"cpu_weight"`
-	MemoryHighMB  int `json:"memory_high_mb"`
-	MemoryMaxMB   int `json:"memory_max_mb"`
-	PHPWorkers    int `json:"php_workers"` // 0 = auto-size
-	DBConnections int `json:"db_connections"`
+	MemoryHighMB int `json:"memory_high_mb"`
+	PHPWorkers   int `json:"php_workers"` // 0 = auto-size
 }
 
 // BackupPolicy configures the Restic schedule for a site.

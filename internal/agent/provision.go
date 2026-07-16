@@ -233,7 +233,6 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 			Name:     site.Config.Database.Name,
 			User:     site.Config.Database.User,
 			Password: p.DBPassword,
-			MaxConns: site.Config.Resources.DBConnections,
 		}
 		if _, err := a.CreateDatabase(dbp); err != nil {
 			return result, err
