@@ -163,6 +163,36 @@ func TestCreateStaticSite(t *testing.T) {
 	}
 }
 
+// A freshly provisioned php/laravel site must serve something instead of a
+// bare 403 until the operator deploys real code — the same "launched"
+// placeholder static sites already got, just as PHP so it proves execution.
+func TestCreatePHPAndLaravelSitesGetPlaceholder(t *testing.T) {
+	a, _ := testAgent(t)
+
+	php := staticSite(a)
+	php.Type, php.Domain, php.SystemUser = state.SitePHP, "app.example.com", "slip-site-4"
+	php.RootPath = filepath.Join(a.Paths.SitesRoot, php.Domain)
+	php.PHPVersion = "8.4"
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: php}); err != nil {
+		t.Fatalf("CreateSite(php): %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(php.RootPath, "releases/initial/index.php")); err != nil || !strings.Contains(string(b), "<?php") {
+		t.Errorf("php site missing placeholder index.php: %v", err)
+	}
+
+	laravel := staticSite(a)
+	laravel.Type, laravel.Domain, laravel.SystemUser = state.SiteLaravel, "shop.example.com", "slip-site-5"
+	laravel.RootPath = filepath.Join(a.Paths.SitesRoot, laravel.Domain)
+	laravel.PHPVersion = "8.4"
+	laravel.Config.PublicRoot = "public"
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: laravel}); err != nil {
+		t.Fatalf("CreateSite(laravel): %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(laravel.RootPath, "releases/initial/public/index.php")); err != nil || !strings.Contains(string(b), "<?php") {
+		t.Errorf("laravel site missing placeholder public/index.php: %v", err)
+	}
+}
+
 func TestCreateSiteRejectsBadInput(t *testing.T) {
 	a, run := testAgent(t)
 	bad := []state.Site{

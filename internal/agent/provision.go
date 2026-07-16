@@ -278,6 +278,21 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		if err := os.WriteFile(index, []byte(placeholderHTML(site.Domain)), 0o644); err != nil {
 			return result, err
 		}
+	case state.SitePHP, state.SiteLaravel:
+		// Same "launched" placeholder as static sites, but as PHP so a fresh
+		// site actually serves something instead of a bare 403 until the
+		// operator deploys real code. Laravel's docroot is releases/*/public.
+		docRoot := releaseDir
+		if site.Config.PublicRoot != "" {
+			docRoot = filepath.Join(releaseDir, site.Config.PublicRoot)
+			if err := os.MkdirAll(docRoot, 0o750); err != nil {
+				return result, err
+			}
+		}
+		index := filepath.Join(docRoot, "index.php")
+		if err := os.WriteFile(index, []byte(placeholderPHP(site.Domain)), 0o644); err != nil {
+			return result, err
+		}
 	}
 
 	// Precompress static assets so nginx serves ready-made .gz.
@@ -511,6 +526,18 @@ func forceSymlink(target, link string) error {
 		return err
 	}
 	return os.Rename(tmp, link)
+}
+
+// placeholderPHP mirrors placeholderHTML but proves PHP itself is executing
+// (host/version echoed via PHP, not templated in from Go) rather than just
+// serving static markup with a .php extension.
+func placeholderPHP(domain string) string {
+	return `<?php $host = htmlspecialchars($_SERVER['HTTP_HOST'] ?? ` + phpStr(domain) + `, ENT_QUOTES); ?>
+<!doctype html><html><head><meta charset="utf-8"><title><?php echo $host; ?></title></head>
+<body style="font-family:system-ui;display:grid;place-items:center;min-height:100vh;margin:0">
+<div style="text-align:center"><h1><?php echo $host; ?></h1><p>Launched with Slipstream. PHP <?php echo htmlspecialchars(phpversion(), ENT_QUOTES); ?> is running &mdash; deploy your content to replace this page.</p></div>
+</body></html>
+`
 }
 
 func placeholderHTML(domain string) string {
