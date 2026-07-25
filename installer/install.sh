@@ -181,6 +181,17 @@ done
 systemctl daemon-reload
 systemctl enable --now slipstream-api.socket slipstream-agent slipstream-api nginx "php${PHP_VERSION}-fpm" >/dev/null
 
+# apt starts nginx when the package is installed — before the bootstrap vhost
+# above exists. `enable --now` is therefore a no-op on an already-running
+# master, so the :443 listener declared in that vhost never binds and the setup
+# URL printed at the end of this script is unreachable. Reload to load it.
+systemctl reload nginx >/dev/null 2>&1 || systemctl restart nginx >/dev/null 2>&1 || true
+for _ in $(seq 1 10); do
+  ss -ltn 'sport = :443' | grep -q LISTEN && break
+  sleep 1
+done
+ss -ltn 'sport = :443' | grep -q LISTEN || fail "nginx is not listening on 443 — the panel would be unreachable"
+
 # ---------- firewall ----------
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   log "Opening firewall ports 22, 80 and 443…"

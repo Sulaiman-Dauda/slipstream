@@ -185,8 +185,13 @@ pm.status_path = /__slipstream/fpm-status
 request_terminate_timeout = 120s
 catch_workers_output = yes
 
-; Site isolation
-php_admin_value[open_basedir] = {{.Site.RootPath}}:/tmp:/usr/share/php
+; Site isolation. Note /tmp is deliberately NOT on open_basedir: it is shared by
+; every pool of this PHP version (one tenant could read or plant files another
+; writes there, plus a symlink-in-/tmp vector), and it is not needed — the three
+; things PHP would use it for (temp files, uploads, sessions) are all redirected
+; below to this site's own tmp dir. PrivateTmp on the FPM unit would not help:
+; all pools fork from one master and share its namespace.
+php_admin_value[open_basedir] = {{.Site.RootPath}}:/usr/share/php
 php_admin_value[upload_tmp_dir] = {{.TmpDir}}
 php_admin_value[sys_temp_dir] = {{.TmpDir}}
 php_admin_value[session.save_path] = {{.TmpDir}}/sessions

@@ -266,9 +266,15 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		if _, err := a.WPObjectCache(rpc.WPParams{Site: site, Enable: true}); err != nil {
 			a.Log.Warn("object cache setup failed", "site", site.Domain, "err", err)
 		}
-		// Commerce sites: tame the cart-fragments AJAX that punches through
-		// the page cache on every anonymous page.
+		// Commerce sites: actually install WooCommerce, then tame the
+		// cart-fragments AJAX that punches through the page cache on every
+		// anonymous page. Without the install step the "woocommerce" site type
+		// is just WordPress with a dangling SLIPSTREAM_DISABLE_CART_FRAGMENTS
+		// constant — /shop, /cart and /product/* all 404.
 		if site.Type == state.SiteWooCommerce || site.Profile == state.ProfileCommerce {
+			if err := a.installWooCommerce(ctx, site, releaseDir); err != nil {
+				return result, fmt.Errorf("woocommerce install: %w", err)
+			}
 			run := func(args ...string) { a.wp(ctx, site, args...) }
 			run("config", "set", "SLIPSTREAM_DISABLE_CART_FRAGMENTS", "true", "--raw")
 		}
@@ -417,6 +423,47 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 		return err
 	}
 	return os.WriteFile(filepath.Join(muDir, "slipstream-connector.php"), []byte(ConnectorPHP), 0o644)
+}
+
+// installWooCommerce installs and activates WooCommerce on an already-installed
+// WordPress, creates its pages (shop/cart/checkout/my-account) and flushes the
+// rewrite rules so /shop and /product/* resolve instead of 404ing. It finishes
+// by clearing the APCu object cache: the plugin activation and page creation
+// run under wp-cli, whose APCu segment is separate from PHP-FPM's, so without
+// this the live site keeps serving the pre-WooCommerce rewrite state (real
+// pages 404) until FPM is restarted for some other reason.
+func (a *Agent) installWooCommerce(ctx context.Context, site state.Site, dir string) error {
+	run := func(args ...string) error {
+		argv := append([]string{"-u", site.SystemUser, "--", "wp", "--path=" + dir}, args...)
+		_, err := a.Runner.Run(ctx, "runuser", argv...)
+		return err
+	}
+	if err := run("plugin", "install", "woocommerce", "--activate"); err != nil {
+		return fmt.Errorf("wp plugin install woocommerce: %w", err)
+	}
+	// Activation registers the product post type and Woo's rewrite rules, and
+	// (via wc_create_pages on activation) creates the shop/cart/checkout/
+	// my-account pages. Flush so those rules are persisted to the DB option.
+	if err := run("rewrite", "flush"); err != nil {
+		return fmt.Errorf("wp rewrite flush: %w", err)
+	}
+	// Clear APCu so PHP-FPM stops serving the stale (pre-Woo) rewrite_rules and
+	// options it cached during the WordPress-only phase. FPM's segment is not
+	// reachable from this wp-cli process, so restart the pool. A reload
+	// (SIGUSR2) keeps the master alive and does NOT drop APCu shared memory.
+	if err := a.restartPHPFPM(ctx, site.PHPVersion); err != nil {
+		a.Log.Warn("php-fpm restart after woocommerce install failed", "site", site.Domain, "err", err)
+	}
+	return nil
+}
+
+// restartPHPFPM fully restarts the FPM service, dropping APCu shared memory
+// (which a reload preserves). Use after out-of-band wp-cli mutations that must
+// become visible to the live site; prefer reloadPHPFPM for code-only changes
+// where the object cache should survive.
+func (a *Agent) restartPHPFPM(ctx context.Context, phpVersion string) error {
+	_, err := a.Runner.Run(ctx, "systemctl", "restart", "php"+phpVersion+"-fpm")
+	return err
 }
 
 // DeleteSite tears down a site completely.

@@ -121,19 +121,24 @@ run_type "laravel" "laravel.$DASH.sslip.io" \
 run_type "wordpress" "wp.$DASH.sslip.io" \
   "{\"domain\":\"wp.$DASH.sslip.io\",\"type\":\"wordpress\",\"php_version\":\"8.4\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\"}" "/" 200
 
-# ---- WooCommerce: create, install the plugin (the 500-bug trigger), serve ----
-echo "--- site type: woocommerce (+ plugin activate) ---"
+# ---- WooCommerce: the PRODUCT must install WooCommerce itself and serve its
+# pages. Do NOT install the plugin from the test — that would test our own setup
+# instead of the product and mask a provisioner that ships plain WordPress.
+echo "--- site type: woocommerce (product installs Woo, shop/cart resolve) ---"
 WOO="shop.$DASH.sslip.io"
 WID=$(create_site "{\"domain\":\"$WOO\",\"type\":\"woocommerce\",\"profile\":\"commerce\",\"php_version\":\"8.4\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\",\"object_cache\":true}")
 if [ -n "$WID" ]; then
-  st=$(wait_active "$WID" 120); check "woocommerce provisions" "$st" "active"
+  st=$(wait_active "$WID" 180); check "woocommerce provisions" "$st" "active"
   U=$(site_get "$WID" | jqget "['system_user']"); P="/srv/sites/$WOO/current"
-  sudo -u "$U" wp --path="$P" plugin install woocommerce --activate >/dev/null 2>&1
+  # The provisioner — not this script — must have installed + activated Woo.
   ver=$(sudo -u "$U" wp --path="$P" plugin get woocommerce --field=version 2>/dev/null)
-  [ -n "$ver" ] && ok "woocommerce plugin active ($ver)" || bad "woocommerce plugin install"
+  [ -n "$ver" ] && ok "woocommerce installed by provisioner ($ver)" || bad "provisioner did not install WooCommerce"
   read -r code fatal <<<"$(serves "$WOO" /)"
-  check "woocommerce serves (was the 500 bug)" "$code" "200"
+  check "woocommerce home serves (was the 500 bug)" "$code" "200"
   check "woocommerce no PHP fatal" "$fatal" "no"
+  # The Woo-registered routes must resolve, not 404 (the stale-APCu rewrite bug).
+  read -r scode _ <<<"$(serves "$WOO" /shop/)";  check "woocommerce /shop resolves"  "$scode" "200"
+  read -r ccode _ <<<"$(serves "$WOO" /cart/)";  check "woocommerce /cart resolves"  "$ccode" "200"
 fi
 
 # ---- WordPress feature suite on a fresh WP site ----
