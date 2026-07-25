@@ -251,14 +251,21 @@ func (a *Agent) RestoreSnapshot(p rpc.RestoreParams) (map[string]string, error) 
 		os.Rename(oldRoot, p.Site.RootPath)
 		rollbackDB()
 		if p.Site.PHPVersion != "" {
-			a.reloadPHPFPM(context.Background(), p.Site.PHPVersion)
+			// Restart, not reload: the DB rollback restores different rows than
+			// FPM has cached in APCu, which SIGUSR2 preserves.
+			a.restartPHPFPM(context.Background(), p.Site.PHPVersion)
 		}
 		a.reloadNginx()
 	}
 	if p.Site.PHPVersion != "" {
-		if err := a.reloadPHPFPM(ctx, p.Site.PHPVersion); err != nil {
+		// A restore swaps the entire database (and files) underneath FPM.
+		// APCu shared memory still holds the pre-restore options, rewrite rules
+		// and object cache; a reload (SIGUSR2) does not drop it, so the restored
+		// site would serve a mix of new files and stale cached state (e.g. old
+		// rewrite rules -> real pages 404). Restart to clear APCu and OPcache.
+		if err := a.restartPHPFPM(ctx, p.Site.PHPVersion); err != nil {
 			rollbackFiles()
-			return nil, fmt.Errorf("reload PHP after restore: %w", err)
+			return nil, fmt.Errorf("restart PHP after restore: %w", err)
 		}
 	}
 	if err := a.reloadNginx(); err != nil {

@@ -61,7 +61,7 @@ func TestRenderPool(t *testing.T) {
 		"user = slip-site-7",
 		"listen = /run/slipstream/php/slip-site-7.sock",
 		"pm = dynamic",
-		"php_admin_value[open_basedir] = /srv/sites/shop.example.com:/tmp:/usr/share/php",
+		"php_admin_value[open_basedir] = /srv/sites/shop.example.com:/usr/share/php",
 		"php_admin_flag[opcache.enable] = on",
 		"php_admin_value[opcache.memory_consumption] = 256",
 		"php_admin_value[memory_limit] = 512M", // WooCommerce gets headroom
@@ -70,6 +70,11 @@ func TestRenderPool(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Errorf("pool missing %q", want)
 		}
+	}
+	// /tmp must not be on open_basedir: it is a cross-tenant channel and all
+	// temp uses are redirected to the site's own tmp.
+	if strings.Contains(content, ":/tmp:") {
+		t.Errorf("open_basedir must not include /tmp (cross-tenant channel)")
 	}
 
 	if _, _, err := RenderPool(state.Site{Domain: "x.com"}, 0); err == nil {
