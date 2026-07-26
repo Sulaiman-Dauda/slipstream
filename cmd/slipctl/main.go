@@ -119,6 +119,15 @@ func env(key, def string) string {
 
 func main() {
 	args := os.Args[1:]
+	// `slipctl --version` must answer without needing credentials or a
+	// reachable panel; usage() below requires neither, but -v/--version did
+	// not previously print a bare version at all.
+	for _, a := range args {
+		if a == "-v" || a == "--version" || a == "version" {
+			fmt.Println("slipctl " + version.Version)
+			return
+		}
+	}
 	if len(args) == 0 {
 		usage()
 	}

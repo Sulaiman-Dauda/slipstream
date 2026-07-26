@@ -154,9 +154,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			respond(w, http.StatusUnauthorized, map[string]any{"error": "two-factor code required", "totp_required": true})
 			return
 		}
-		if !verifyTOTP(secret, c.TOTP, time.Now()) {
+		step, ok := verifyTOTPStep(secret, c.TOTP, time.Now())
+		if !ok {
 			s.Store.Audit(user.Email, "login.totp_failed", "panel", clientIP(r))
 			respond(w, http.StatusUnauthorized, map[string]any{"error": "invalid two-factor code", "totp_required": true})
+			return
+		}
+		// Refuse a code that has already been used. The update only moves the
+		// watermark forward, so two concurrent logins with the same code cannot
+		// both succeed.
+		if fresh, err := s.Store.MarkTOTPStepUsed(user.ID, step); err != nil || !fresh {
+			s.Store.Audit(user.Email, "login.totp_replay", "panel", clientIP(r))
+			respond(w, http.StatusUnauthorized, map[string]any{"error": "that two-factor code has already been used — wait for the next one", "totp_required": true})
 			return
 		}
 	}

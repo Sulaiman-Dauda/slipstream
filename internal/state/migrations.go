@@ -170,4 +170,11 @@ CREATE TABLE metric_samples (
 );
 CREATE INDEX idx_metric_samples_time ON metric_samples(sampled_at);
 `,
+	// 5: TOTP replay protection. RFC 6238 §5.2 requires the verifier to
+	// reject a code that has already been accepted; without a record of the
+	// last accepted time-step a captured code stays valid for the whole
+	// acceptance window (~90s here).
+	`
+ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0;
+`,
 }

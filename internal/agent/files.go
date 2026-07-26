@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 )
@@ -104,22 +107,21 @@ func (a *Agent) ReadFile(p rpc.ReadFileParams) (rpc.ReadFileResult, error) {
 	if err := validateSite(p.Site); err != nil {
 		return rpc.ReadFileResult{}, err
 	}
-	full, err := resolveInSite(p.Site.RootPath, p.RelPath)
+	// Open through openat2/RESOLVE_BENEATH: a symlink swapped in after a
+	// path check would otherwise let root read any file on the host (e.g.
+	// /etc/shadow) and hand it back through the file manager.
+	f, err := openBeneath(p.Site.RootPath, p.RelPath, unix.O_RDONLY, 0)
 	if err != nil {
 		return rpc.ReadFileResult{}, err
 	}
-	fi, err := os.Stat(full)
+	defer f.Close()
+	fi, err := f.Stat()
 	if err != nil {
 		return rpc.ReadFileResult{}, err
 	}
 	if fi.IsDir() {
 		return rpc.ReadFileResult{}, fmt.Errorf("path is a directory")
 	}
-	f, err := os.Open(full)
-	if err != nil {
-		return rpc.ReadFileResult{}, err
-	}
-	defer f.Close()
 	buf := make([]byte, maxEditableFile)
 	n, _ := f.Read(buf)
 	res := rpc.ReadFileResult{RelPath: p.RelPath, Content: string(buf[:n])}
@@ -138,14 +140,13 @@ func (a *Agent) WriteFile(p rpc.WriteFileParams) (map[string]string, error) {
 	if len(p.Content) > maxEditableFile {
 		return nil, fmt.Errorf("file too large to edit here")
 	}
-	full, err := resolveInSite(p.Site.RootPath, p.RelPath)
-	if err != nil {
+	// Write through openat2/RESOLVE_BENEATH and chown the descriptor, so a
+	// site user cannot swap a path component for a symlink between the check
+	// and the write and have root write (or hand them ownership of) a file
+	// outside the jail. See openbeneath.go.
+	if err := writeBeneath(p.Site.RootPath, p.RelPath, p.Site.SystemUser, p.Content, 0o640); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(full, []byte(p.Content), 0o640); err != nil {
-		return nil, err
-	}
-	a.Runner.Run(context.Background(), "chown", p.Site.SystemUser+":"+p.Site.SystemUser, full)
 	return map[string]string{"written": p.RelPath}, nil
 }
 
@@ -172,30 +173,19 @@ func (a *Agent) TransferFile(p rpc.TransferFileParams) (rpc.TransferFileResult, 
 		if fi, err := os.Stat(full); err == nil && fi.IsDir() {
 			return rpc.TransferFileResult{}, fmt.Errorf("destination is a directory")
 		}
-		tmp, err := os.CreateTemp(filepath.Dir(full), ".slipstream-upload-*")
-		if err != nil {
+		// Same kernel-enforced containment as the editor: an upload must not be
+		// divertible outside the jail by a symlink swapped in mid-operation.
+		if err := writeBeneath(p.Site.RootPath, p.RelPath, p.Site.SystemUser, string(p.Data), 0o640); err != nil {
 			return rpc.TransferFileResult{}, err
 		}
-		tmpName := tmp.Name()
-		defer os.Remove(tmpName)
-		if _, err := tmp.Write(p.Data); err != nil {
-			tmp.Close()
-			return rpc.TransferFileResult{}, err
-		}
-		if err := tmp.Chmod(0o640); err != nil {
-			tmp.Close()
-			return rpc.TransferFileResult{}, err
-		}
-		if err := tmp.Close(); err != nil {
-			return rpc.TransferFileResult{}, err
-		}
-		if err := os.Rename(tmpName, full); err != nil {
-			return rpc.TransferFileResult{}, err
-		}
-		a.Runner.Run(context.Background(), "chown", p.Site.SystemUser+":"+p.Site.SystemUser, full)
 		return rpc.TransferFileResult{Name: filepath.Base(full), Size: int64(len(p.Data))}, nil
 	}
-	fi, err := os.Stat(full)
+	df, err := openBeneath(p.Site.RootPath, p.RelPath, unix.O_RDONLY, 0)
+	if err != nil {
+		return rpc.TransferFileResult{}, err
+	}
+	defer df.Close()
+	fi, err := df.Stat()
 	if err != nil {
 		return rpc.TransferFileResult{}, err
 	}
@@ -205,8 +195,8 @@ func (a *Agent) TransferFile(p rpc.TransferFileParams) (rpc.TransferFileResult, 
 	if fi.Size() > maxTransferFile {
 		return rpc.TransferFileResult{}, fmt.Errorf("download exceeds 16 MB; use SFTP for larger files")
 	}
-	data, err := os.ReadFile(full)
-	if err != nil {
+	data := make([]byte, fi.Size())
+	if _, err := io.ReadFull(df, data); err != nil {
 		return rpc.TransferFileResult{}, err
 	}
 	return rpc.TransferFileResult{Name: filepath.Base(full), Data: data, Size: fi.Size()}, nil

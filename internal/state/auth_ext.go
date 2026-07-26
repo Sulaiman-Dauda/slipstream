@@ -213,3 +213,28 @@ func (s *Store) ReconcileRunningTasks() error {
 		WHERE status IN ('running','pending')`, now())
 	return err
 }
+
+// TOTPLastStep returns the most recent time-step accepted for a user, used to
+// reject replay of a code that has already been used.
+func (s *Store) TOTPLastStep(userID int64) (uint64, error) {
+	var step int64
+	err := s.db.QueryRow(`SELECT totp_last_step FROM users WHERE id=?`, userID).Scan(&step)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(step), nil
+}
+
+// MarkTOTPStepUsed records an accepted time-step, but only moves forward — a
+// concurrent login with an older code must not lower the watermark. Reports
+// whether this step was still unused.
+func (s *Store) MarkTOTPStepUsed(userID int64, step uint64) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE users SET totp_last_step=? WHERE id=? AND totp_last_step < ?`,
+		int64(step), userID, int64(step))
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
