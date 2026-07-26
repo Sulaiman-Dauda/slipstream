@@ -290,6 +290,48 @@ SSHD
 sshd -t
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
+# ---------- log rotation ----------
+# Without this the panel is the only thing on the box writing unbounded logs:
+# every other service here ships a logrotate config. A busy site produces
+# hundreds of MB of access log a week, and a full disk takes every site down —
+# so this is a availability control, not housekeeping.
+log "Installing log rotation…"
+cat > /etc/logrotate.d/slipstream <<'ROTATE'
+# Managed by Slipstream.
+# Per-site nginx access/error logs.
+/var/log/slipstream/*/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    # Copy-and-truncate: nginx holds these open, and renaming without telling it
+    # leaves it writing to an unlinked inode (disk fills with an invisible file).
+    # copytruncate avoids needing a reload per rotation across every vhost.
+    copytruncate
+}
+
+# Per-site PHP error logs live inside the site tree so the owner can read them.
+/srv/sites/*/logs/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    # Keep the site user as owner; these are read through the file manager.
+    su root root
+}
+ROTATE
+chmod 0644 /etc/logrotate.d/slipstream
+# Fail loudly here rather than discovering a broken config weeks later when the
+# disk is full: logrotate parses every file in logrotate.d on each run.
+logrotate --debug /etc/logrotate.d/slipstream >/dev/null 2>&1 || \
+  log "warning: logrotate rejected the Slipstream config — check /etc/logrotate.d/slipstream"
+
 # ---------- certificate renewal ----------
 # certbot's timer renews certificates, but without a deploy hook nginx keeps
 # serving the OLD certificate from memory until it is reloaded — so a renewed
