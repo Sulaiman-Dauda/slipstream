@@ -188,7 +188,16 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 	s.Store.SetSetting(secretKey(created.ID, "connector_token"), connectorToken)
 	s.Store.Audit(s.actor(r), "site.create", created.Domain, string(created.Type))
 
+	// The provisioning task runs on its own goroutine and mutates the site as
+	// it goes (status, and whatever the agent fills in). The handler below
+	// responds immediately, so both would touch the same variable at once —
+	// a data race, and the response could report a half-updated struct.
+	// Give the task its own copy and respond with the state as it is now.
+	response := created
+	taskSite := created
+
 	task, err := s.runTask("site.create", created.ID, func(progress func(int, string)) error {
+		created := taskSite // task-local copy; never shared with the handler
 		progress(10, "Provisioning "+created.Domain)
 		params := rpc.CreateSiteParams{
 			Site:           created,
@@ -240,7 +249,7 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	respond(w, http.StatusAccepted, map[string]any{"site": created, "task": task})
+	respond(w, http.StatusAccepted, map[string]any{"site": response, "task": task})
 }
 
 func (s *Server) rollbackCreatedSite(site state.Site) {
