@@ -38,7 +38,7 @@ jobs:
           sha256sum -c panel-api.sha256 panel-agent.sha256 slipctl.sha256
 
       - name: Publish
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/panel-api
