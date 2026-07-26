@@ -5,18 +5,51 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 	"github.com/slipstream-panel/slipstream/internal/sysprobe"
 	"github.com/slipstream-panel/slipstream/internal/tune"
 )
 
+// waitForMariaDB blocks until the server accepts a socket connection, or the
+// budget expires. `systemctl restart` returns when systemd is satisfied, which
+// is earlier than MariaDB accepting connections — issuing SQL in that window
+// fails with "ERROR 2002 (HY000): Can't connect to local server".
+//
+// Observed in the wild: provisioning four sites at once on a fresh install, the
+// first site with a database triggered the tuning restart below and a concurrent
+// site's CREATE DATABASE landed during it, failing that provision outright.
+func (a *Agent) waitForMariaDB(ctx context.Context, budget time.Duration) error {
+	deadline := time.Now().Add(budget)
+	var lastErr error
+	for {
+		if _, lastErr = a.Runner.Run(ctx, "mariadb", "--protocol=socket", "-e", "SELECT 1"); lastErr == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("mariadb did not accept connections within %s: %w", budget, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 // tuneMariaDBIfNeeded applies hardware-aware MariaDB tuning the first time a
 // database is created. It sizes the InnoDB buffer pool and connection limits
-// from measured RAM/CPU (shared-server role), writes the managed config, and
-// restarts MariaDB. Idempotent: it no-ops once the config exists so operator
-// changes and re-tunes are never clobbered.
+// from measured RAM/CPU (shared-server role), writes the managed config,
+// restarts MariaDB and waits for it to come back. Idempotent: it no-ops once
+// the config exists so operator changes and re-tunes are never clobbered.
+//
+// Holding dbMu for the whole function is what makes concurrent provisioning
+// safe: callers that arrive while the restart is in flight block here rather
+// than issuing SQL at a server that is still starting.
 func (a *Agent) tuneMariaDBIfNeeded(ctx context.Context) {
+	a.dbMu.Lock()
+	defer a.dbMu.Unlock()
 	if _, err := os.Stat(tune.ConfigPath); err == nil {
 		return // already tuned
 	}
@@ -36,6 +69,10 @@ func (a *Agent) tuneMariaDBIfNeeded(ctx context.Context) {
 	}
 	if _, err := a.Runner.Run(ctx, "systemctl", "restart", "mariadb"); err != nil {
 		a.Log.Warn("mariadb tune: restart failed", "err", err)
+		return
+	}
+	if err := a.waitForMariaDB(ctx, 60*time.Second); err != nil {
+		a.Log.Warn("mariadb tune: server did not come back", "err", err)
 		return
 	}
 	a.Log.Info("mariadb tuned for hardware", "config", cfg.String())

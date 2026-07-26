@@ -99,8 +99,10 @@ func CalculateMariaDB(memTotalMB int64, cpuCount int, role Role, commerce bool) 
 	}
 }
 
-// ConfigPath is where the rendered tuning file lives.
-const ConfigPath = "/etc/mysql/mariadb.conf.d/99-slipstream.cnf"
+// ConfigPath is where the rendered tuning file lives. A var rather than a const
+// only so tests can redirect it at a temp directory; nothing reassigns it at
+// runtime.
+var ConfigPath = "/etc/mysql/mariadb.conf.d/99-slipstream.cnf"
 
 // Render produces the MariaDB config file content.
 func (c MariaDBConfig) Render() (string, error) {
