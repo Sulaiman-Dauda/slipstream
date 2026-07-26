@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,9 +15,15 @@ import (
 	"github.com/slipstream-panel/slipstream/internal/rpc"
 )
 
-// DBQuery runs SQL against a database and returns tabular output. The API
-// restricts which statements are allowed; the agent enforces the database
-// name is well-formed and runs through mariadb with tab-separated output.
+// DBQuery runs SQL against a database and returns tabular output.
+//
+// The query does NOT run as the MariaDB superuser. Naming a default database
+// does not confine a query to it — `SELECT * FROM otherdb.wp_users` reads
+// straight across, so a panel operator scoped to one site could read (and
+// write) every other tenant's database through their own console. Instead the
+// agent mints a throwaway MariaDB account granted only on this one database
+// and runs the statement as that account, letting the server's own grant
+// system enforce the boundary. The account is dropped when the query returns.
 func (a *Agent) DBQuery(p rpc.DBQueryParams) (rpc.DBQueryResult, error) {
 	if !dbIdentRe.MatchString(p.Database) {
 		return rpc.DBQueryResult{}, fmt.Errorf("invalid database name")
@@ -22,10 +31,20 @@ func (a *Agent) DBQuery(p rpc.DBQueryParams) (rpc.DBQueryResult, error) {
 	if strings.TrimSpace(p.SQL) == "" {
 		return rpc.DBQueryResult{}, fmt.Errorf("empty query")
 	}
-	out, err := a.Runner.Run(context.Background(), "mariadb", "--protocol=socket",
-		"--batch", "--column-names", p.Database, "-e", p.SQL)
+	ctx := context.Background()
+	cred, err := a.scopedDBUser(ctx, p.Database)
 	if err != nil {
-		return rpc.DBQueryResult{Message: err.Error()}, nil
+		return rpc.DBQueryResult{}, err
+	}
+	defer cred.close()
+
+	out, err := a.Runner.Run(ctx, "mariadb", "--defaults-extra-file="+cred.file,
+		"--protocol=socket", "--batch", "--column-names", p.Database, "-e", p.SQL)
+	if err != nil {
+		// Surface MariaDB's own message, not our argv — the raw error embeds
+		// the command line including the credential file path, which is both
+		// noise for the operator and needless internal detail on screen.
+		return rpc.DBQueryResult{Message: databaseErrorMessage(err)}, nil
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	res := rpc.DBQueryResult{}
@@ -229,4 +248,111 @@ func copyFile(src, dst, owner string, a *Agent) error {
 		a.Runner.Run(context.Background(), "chown", owner+":"+owner, dst)
 	}
 	return nil
+}
+
+// scopedCred is a short-lived MariaDB account confined to one database, plus
+// the defaults-file holding its password. The password never appears in argv
+// (which is world-readable via /proc), only in a 0600 file owned by root.
+type scopedCred struct {
+	user  string
+	file  string
+	close func()
+}
+
+// scopedDBUser creates a throwaway MariaDB account with privileges on exactly
+// one database and returns credentials for it. Call close() when done — it
+// drops the account and removes the defaults-file.
+//
+// This exists so the SQL console cannot reach across databases. Running console
+// SQL as root meant a site-scoped operator could read and write every other
+// tenant's data by qualifying the table name; MariaDB's grants are the only
+// reliable place to enforce that boundary, because inspecting the SQL for
+// cross-schema references is not something a prefix check can do safely.
+func (a *Agent) scopedDBUser(ctx context.Context, database string) (scopedCred, error) {
+	if !dbIdentRe.MatchString(database) {
+		return scopedCred{}, fmt.Errorf("invalid database name")
+	}
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return scopedCred{}, err
+	}
+	pwBytes := make([]byte, 24)
+	if _, err := rand.Read(pwBytes); err != nil {
+		return scopedCred{}, err
+	}
+	// Usernames are capped at 80 chars in MariaDB; this is well under.
+	user := "slipq_" + hex.EncodeToString(suffix)
+	password := base64.RawURLEncoding.EncodeToString(pwBytes)
+
+	// The identifiers here are ours (a hex suffix and a validated database
+	// name), never user input, so interpolation is safe. The password is
+	// base64url — no quote characters — and is passed on stdin, not argv.
+	stmt := fmt.Sprintf(
+		"CREATE USER '%s'@'localhost' IDENTIFIED BY '%s' WITH MAX_USER_CONNECTIONS 4;\n"+
+			"GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';\nFLUSH PRIVILEGES;\n",
+		user, password, database, user)
+	if _, err := a.Runner.RunStdin(ctx, stmt, "mariadb", "--protocol=socket"); err != nil {
+		return scopedCred{}, fmt.Errorf("create scoped database user: %w", err)
+	}
+
+	drop := func() {
+		_, _ = a.Runner.RunStdin(context.Background(),
+			fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost';\n", user),
+			"mariadb", "--protocol=socket")
+	}
+
+	f, err := os.CreateTemp(a.Paths.WorkDir, ".dbq-*.cnf")
+	if err != nil {
+		// Fall back to the system temp dir if the work dir is unavailable.
+		f, err = os.CreateTemp("", ".slipstream-dbq-*.cnf")
+		if err != nil {
+			drop()
+			return scopedCred{}, err
+		}
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		drop()
+		return scopedCred{}, err
+	}
+	if _, err := fmt.Fprintf(f, "[client]\nuser=%s\npassword=%s\n", user, password); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		drop()
+		return scopedCred{}, err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		drop()
+		return scopedCred{}, err
+	}
+
+	name := f.Name()
+	return scopedCred{user: user, file: name, close: func() {
+		os.Remove(name)
+		drop()
+	}}, nil
+}
+
+// databaseErrorMessage extracts the database server's own error from a Runner
+// failure. Runner formats errors as "<cmd> <args>: <err>: <stderr>", which for
+// the SQL console would print the whole mariadb invocation — including the
+// temporary credential file — back to the operator.
+func databaseErrorMessage(err error) string {
+	msg := err.Error()
+	// Prefer the ERROR line MariaDB emits; it is the part that is useful.
+	for _, line := range strings.Split(msg, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ERROR ") {
+			return line
+		}
+	}
+	// Otherwise take everything after the last ": " that Runner prepended.
+	if i := strings.LastIndex(msg, ": "); i >= 0 && i+2 < len(msg) {
+		if tail := strings.TrimSpace(msg[i+2:]); tail != "" {
+			return tail
+		}
+	}
+	return "query failed"
 }

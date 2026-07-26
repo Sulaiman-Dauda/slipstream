@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -11,11 +12,11 @@ import (
 // volume is tiny, so in-memory (reset on restart) is the right trade-off
 // against a persistent store.
 type rateLimiter struct {
-	mu       sync.Mutex
-	hits     map[string][]time.Time
-	max      int
-	window   time.Duration
-	lastGC   time.Time
+	mu     sync.Mutex
+	hits   map[string][]time.Time
+	max    int
+	window time.Duration
+	lastGC time.Time
 }
 
 func newRateLimiter(max int, window time.Duration) *rateLimiter {
@@ -59,11 +60,44 @@ func (r *rateLimiter) reset(key string) {
 	r.mu.Unlock()
 }
 
-// clientIP extracts the best-effort client address from a request.
+// clientIP returns the address of whoever actually made the request.
+//
+// panel-api listens on loopback and is always fronted by the panel's own
+// nginx, so r.RemoteAddr is 127.0.0.1 for every request. Using it alone makes
+// the audit log record every login as "127.0.0.1" — useless for answering
+// "where did this admin session come from?" — and collapses login rate
+// limiting onto a single bucket shared by every source.
+//
+// So: when (and only when) the connection comes from loopback, believe the
+// X-Real-IP header our own nginx sets. nginx assigns it from $remote_addr,
+// overwriting anything the client sent, so it cannot be spoofed through the
+// proxy. A request arriving from anywhere else is not from our proxy and its
+// headers are ignored entirely.
+//
+// This is deliberately the opposite of CloudPanel's default, which trusts
+// forwarded headers from every source (set_real_ip_from 0.0.0.0/0) and can
+// therefore be told any source address by the client.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !isLoopback(host) {
+		return host
+	}
+	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+		if ip := net.ParseIP(real); ip != nil {
+			return ip.String()
+		}
 	}
 	return host
+}
+
+// isLoopback reports whether an address is the local machine.
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

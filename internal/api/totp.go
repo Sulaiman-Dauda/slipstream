@@ -59,17 +59,28 @@ func totpCode(secret string, counter uint64) (string, bool) {
 // verifyTOTP checks a code against the current 30s window ±1 step, so a
 // code entered just before/after a boundary still works.
 func verifyTOTP(secret, code string, now time.Time) bool {
+	_, ok := verifyTOTPStep(secret, code, now)
+	return ok
+}
+
+// verifyTOTPStep validates a code and reports WHICH time-step matched, so the
+// caller can record it and refuse a replay. RFC 6238 §5.2: "the verifier MUST
+// NOT accept the second attempt of the OTP after the successful validation".
+// Without this a code stays usable for the whole acceptance window, so anyone
+// who observes one (shoulder-surfing, a phishing proxy, a logged request) can
+// reuse it.
+func verifyTOTPStep(secret, code string, now time.Time) (uint64, bool) {
 	code = strings.TrimSpace(code)
 	if len(code) != 6 {
-		return false
+		return 0, false
 	}
 	step := uint64(now.Unix() / 30)
 	for _, c := range []uint64{step - 1, step, step + 1} {
 		if want, ok := totpCode(secret, c); ok && subtleEqual(want, code) {
-			return true
+			return c, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 func padBase32(s string) string {

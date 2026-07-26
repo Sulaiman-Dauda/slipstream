@@ -31,6 +31,20 @@ func env(key, def string) string {
 }
 
 func main() {
+	if version.HandleFlag(os.Args[1:], "panel-api", `Slipstream's control plane: the HTTP API and embedded web UI. Started by
+systemd as slipstream-api.service; it is not normally run by hand.
+
+Runs unprivileged and delegates privileged work to panel-agent over an
+authenticated Unix socket.
+
+Environment:
+  SLIPSTREAM_LISTEN             listen address (default 127.0.0.1:5252)
+  SLIPSTREAM_STATE_DIR          panel database directory (default /var/lib/slipstream)
+  SLIPSTREAM_AGENT_SOCKET       agent socket path
+  SLIPSTREAM_AGENT_TOKEN_FILE   shared-secret file`) {
+		return
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	statePath := env("SLIPSTREAM_STATE", "/var/lib/slipstream/state.db")

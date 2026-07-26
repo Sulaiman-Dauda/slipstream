@@ -21,6 +21,20 @@ func env(key, def string) string {
 }
 
 func main() {
+	if version.HandleFlag(os.Args[1:], "panel-agent", `Slipstream's privileged daemon. Started by systemd as slipstream-agent.service;
+it is not normally run by hand.
+
+It listens on a root-owned Unix socket and executes typed commands from
+panel-api: provisioning, releases, backups, certificates, cache purges and
+drift checks.
+
+Environment:
+  SLIPSTREAM_AGENT_SOCKET       socket path (default /run/slipstream/agent.sock)
+  SLIPSTREAM_AGENT_TOKEN_FILE   shared-secret file (default /etc/slipstream/agent.token)
+  SLIPSTREAM_SOCKET_GROUP       group allowed to reach the socket (default slipstream)`) {
+		return
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	socket := env("SLIPSTREAM_AGENT_SOCKET", "/run/slipstream/agent.sock")
 	tokenFile := env("SLIPSTREAM_AGENT_TOKEN_FILE", "/etc/slipstream/agent.token")
