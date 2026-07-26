@@ -11,6 +11,31 @@ Symptoms first, since that is what you have when something is wrong.
 | `at least 2 GB of RAM required` | it will not fit reliably below that |
 | `another control panel is installed` | remove it, or use a fresh server |
 
+These are checked before anything is installed, so a refusal leaves the machine untouched — no
+packages, no users, no directories.
+
+## The install failed part way through
+
+Everything the installer runs is logged to **`/var/log/slipstream-install.log`**, and on failure it
+prints the last dozen lines of that log with the error. Read the whole file for the full context:
+
+```bash
+tail -50 /var/log/slipstream-install.log
+```
+
+Re-running the installer is safe: it creates users, directories and secrets only if they are absent,
+and re-renders configuration it owns.
+
+## The install looks stuck
+
+It is almost certainly the package step, which is the longest by far. The spinner keeps moving while
+it works, and each finished phase prints its elapsed time. If you want to watch what it is actually
+doing, tail the log from a second session:
+
+```bash
+tail -f /var/log/slipstream-install.log
+```
+
 ## I cannot reach the panel after installing
 
 Check nginx is listening on 443:

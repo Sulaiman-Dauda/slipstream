@@ -52,13 +52,13 @@ jobs:
             Install on a **fresh** Ubuntu 24.04 or 26.04 server:
 
             ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | sudo bash
+            curl -fsSL https://get.slipstreampanel.com | sudo bash
             ```
 
             To pin this exact version instead of tracking the newest release:
 
             ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/install.sh \
+            curl -fsSL https://get.slipstreampanel.com/${{ github.ref_name }} \
               | sudo SLIPSTREAM_VERSION=${{ github.ref_name }} bash
             ```
 

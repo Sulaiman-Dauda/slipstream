@@ -43,11 +43,20 @@ To pin a specific version rather than tracking the newest release, set `SLIPSTRE
 tag:
 
 ```bash
-curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh \
-  | sudo SLIPSTREAM_VERSION=v0.1.0 bash
+curl -fsSL https://get.slipstreampanel.com/v0.1.0 | sudo SLIPSTREAM_VERSION=v0.1.0 bash
 ```
 
-The installer takes about 80 seconds. It:
+Both halves matter: the path pins the **installer script**, and `SLIPSTREAM_VERSION` pins the
+**binaries it downloads**. Setting only one would run a new installer against old binaries, or the
+reverse.
+
+The installer takes about 80 seconds and reports each of its ten phases with a spinner while it
+runs and a tick with the elapsed time when it finishes, so a long step never looks like a hang. All
+command output goes to `/var/log/slipstream-install.log` rather than the screen; if a step fails,
+the installer prints the tail of that log with the error. Piped or non-interactive, it degrades to
+plain `[n/10] label` lines with no escape codes.
+
+It:
 
 - verifies the OS, architecture, memory, disk and that the web ports are free;
 - installs nginx, PHP (8.4 on 24.04, 8.5 on 26.04), MariaDB, Restic, certbot and wp-cli;

@@ -98,7 +98,9 @@ curl -fsSL https://get.slipstreampanel.com | sudo bash
 That is the whole install. It checks the machine, installs nginx, PHP-FPM, MariaDB, restic,
 certbot and wp-cli, downloads the Slipstream binaries and verifies each against its published
 SHA-256, creates the users and directories, generates the secrets, starts the services, and
-prints a one-time setup URL. Ten minutes, no questions asked along the way.
+prints a one-time setup URL. About **eighty seconds**, no questions asked along the way — and it
+shows each step with a tick and its duration as it goes, so you can see it working rather than
+guess. The full output is kept at `/var/log/slipstream-install.log`.
 
 Open the URL, create the administrator account, and add your first site. Expect a browser
 certificate warning until the panel has a real certificate — it starts on a self-signed one.
