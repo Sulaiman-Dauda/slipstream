@@ -691,6 +691,12 @@ func (a *Agent) DeleteSite(p rpc.SiteRef) (map[string]any, error) {
 	if err := os.RemoveAll(filepath.Join(a.Paths.CacheRoot, velocity.SanitizeCacheDirName(site.Domain))); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove cache: %w", err))
 	}
+	// Access/error logs outlive the site otherwise: every created-and-deleted
+	// site left a directory in /var/log/slipstream forever, and logrotate has
+	// nothing to prune once the vhost that wrote them is gone.
+	if err := os.RemoveAll(filepath.Join(a.Paths.LogRoot, site.Domain)); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove logs: %w", err))
+	}
 	if err := os.RemoveAll(site.RootPath); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove site files: %w", err))
 	}
