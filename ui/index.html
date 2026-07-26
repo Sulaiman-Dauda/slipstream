@@ -3,7 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <!-- The panel supports both themes and remembers a manual choice, so declare
+         both rather than forcing the UA into dark form controls. -->
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#04222b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#00728f" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Slipstream</title>
   </head>
   <body>

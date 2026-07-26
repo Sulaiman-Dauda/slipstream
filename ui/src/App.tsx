@@ -81,7 +81,14 @@ export default function App() {
   return (
     <div className="layout">
       <nav className="sidebar">
-        <div className="logo"><span className="dot" /> Slipstream</div>
+        <div className="logo">
+          <svg className="wake" viewBox="0 0 22 16" fill="none" aria-hidden="true">
+            <rect x="0" y="1" width="22" height="3.1" rx="1.55" fill="currentColor" />
+            <rect x="6" y="6.45" width="16" height="3.1" rx="1.55" fill="currentColor" opacity="0.72" />
+            <rect x="13" y="11.9" width="9" height="3.1" rx="1.55" fill="currentColor" opacity="0.45" />
+          </svg>
+          <span><span className="n1">slip</span><span className="n2">stream</span></span>
+        </div>
         {visibleNav.map((group) => (
           <div key={group.section}>
             <div className="nav-section">{group.section}</div>

@@ -22,9 +22,24 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur: 150ms;
 
-  --accent: #2f7fff;
-  --accent-hover: #4b90ff;
-  --accent-press: #2168e0;
+  /* Velocity Cyan — the brand. Instrument cyan rather than the default SaaS
+     blue this used to be (#2f7fff). The exact values are shared with the
+     marketing site; they must not drift apart.
+
+       ink    #04222b   deepest ground, the mark's plate
+       deep   #00728f   load-bearing: filled buttons, links on light
+       mid    #0093b8   the mark itself, soft fills
+       bright #31c6e6   links and accents on dark
+
+     Filled buttons carry white label text, so every state below is chosen to
+     clear 4.5:1 against white: deep 5.6, hover 4.8, press 7.3. Do not lighten
+     hover past #007c9b without re-measuring. */
+  --accent: #00728f;
+  --accent-hover: #007c9b;
+  --accent-press: #005f78;
+  --accent-mid: #0093b8;
+  --accent-bright: #31c6e6;
+  --accent-ink: #04222b;
 }
 
 /* Dark (default) */
@@ -40,8 +55,8 @@
   --text: #f5f5f6;
   --text-2: #a1a1aa;
   --text-3: #6e6e78;
-  --accent-soft: rgba(47, 127, 255, 0.14);
-  --accent-text: #7aa9ff;
+  --accent-soft: rgba(0, 147, 184, 0.16);
+  --accent-text: #31c6e6;
   --good: #34d399; --good-soft: rgba(52, 211, 153, 0.13);
   --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, 0.13);
   --bad: #f87171;  --bad-soft: rgba(248, 113, 113, 0.13);
@@ -67,8 +82,8 @@
     --text: #17171a;
     --text-2: #55555f;
     --text-3: #767683;
-    --accent-soft: rgba(47, 127, 255, 0.1);
-    --accent-text: #1e63e0;
+    --accent-soft: rgba(0, 147, 184, 0.10);
+    --accent-text: #00728f;
     --good: #059669; --good-soft: rgba(5, 150, 105, 0.1);
     --warn: #b45309; --warn-soft: rgba(180, 83, 9, 0.1);
     --bad: #dc2626;  --bad-soft: rgba(220, 38, 38, 0.1);
@@ -85,7 +100,7 @@
 :root[data-theme="light"] {
   --bg: #fafafa; --bg-elev: #fff; --surface: #fff; --surface-2: #f7f7f8; --surface-hover: #f2f2f3;
   --border: rgba(0,0,0,.09); --border-2: rgba(0,0,0,.14); --text: #17171a; --text-2: #55555f; --text-3: #767683;
-  --accent-soft: rgba(47,127,255,.1); --accent-text: #1e63e0;
+  --accent-soft: rgba(0,147,184,.10); --accent-text: #00728f;
   --good: #059669; --good-soft: rgba(5,150,105,.1); --warn: #b45309; --warn-soft: rgba(180,83,9,.1);
   --bad: #dc2626; --bad-soft: rgba(220,38,38,.1);
   --staging: #7c3aed; --staging-soft: rgba(124,58,237,.1);
@@ -141,21 +156,23 @@ h3 { font-size: 12.5px; font-weight: 620; letter-spacing: 0.025em; text-transfor
   display: flex; flex-direction: column; gap: 1px;
   position: sticky; top: 0; height: 100vh; overflow-y: auto;
 }
+/* The wake mark: three bars of decreasing length, the low-pressure wake behind
+   something moving fast. Identical geometry to the marketing site and the
+   favicon — one idea, drawn once. The wordmark splits by weight rather than by
+   colour so it stays legible at this size. */
 .logo {
-  display: flex; align-items: center; gap: 9px;
-  font-weight: 660; font-size: 15px; letter-spacing: -0.02em;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 15px; letter-spacing: -0.025em;
   padding: 6px 10px var(--sp-5);
+  color: var(--text);
 }
-.logo .dot {
-  width: 22px; height: 22px; border-radius: 6px; flex: none;
-  background: linear-gradient(135deg, var(--accent), #16b8a6);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 2px 10px rgba(47,127,255,0.35);
-  position: relative;
+.logo .wake { width: 20px; height: auto; flex: none; color: var(--accent-mid); }
+[data-theme="dark"] .logo .wake { color: var(--accent-bright); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .logo .wake { color: var(--accent-bright); }
 }
-.logo .dot::after {
-  content: ""; position: absolute; inset: 5px 6px auto 6px; height: 2px; border-radius: 2px;
-  background: rgba(255,255,255,0.85);
-}
+.logo .n1 { font-weight: 720; }
+.logo .n2 { font-weight: 340; }
 .nav-section {
   font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
   color: var(--text-3); font-weight: 600; padding: var(--sp-5) 10px 6px;
@@ -329,12 +346,12 @@ button, .btn {
   background: var(--accent); color: #fff; border: 1px solid transparent;
   min-height: 40px; border-radius: var(--r-sm); padding: 9px 16px; font-weight: 580; font-size: 13.5px;
   font-family: inherit; letter-spacing: -0.01em; cursor: pointer;
-  box-shadow: 0 1px 2px rgba(24, 90, 220, 0.25);
+  box-shadow: 0 1px 2px rgba(0, 114, 143, 0.25);
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), opacity var(--dur) var(--ease), transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
   white-space: nowrap;
 }
-button:hover, .btn:hover { background: var(--accent-hover); text-decoration: none; color: #fff; box-shadow: 0 2px 8px rgba(24, 90, 220, 0.35); }
-button:active, .btn:active { transform: translateY(0.5px); background: var(--accent-press); box-shadow: 0 1px 2px rgba(24, 90, 220, 0.25); }
+button:hover, .btn:hover { background: var(--accent-hover); text-decoration: none; color: #fff; box-shadow: 0 2px 8px rgba(0, 114, 143, 0.35); }
+button:active, .btn:active { transform: translateY(0.5px); background: var(--accent-press); box-shadow: 0 1px 2px rgba(0, 114, 143, 0.25); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button.ghost, .btn.ghost { background: var(--surface); color: var(--text); border-color: var(--border-2); box-shadow: none; }

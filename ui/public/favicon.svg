@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Slipstream">
+  <!-- The wake mark on its ink plate. Bars are 5px on a 32px grid so the shape
+       still reads at 16px; anything finer collapses to a smear at tab size. -->
+  <rect width="32" height="32" rx="7.5" fill="#04222b"/>
+  <g fill="#31c6e6">
+    <rect x="4"  y="7"    width="24" height="5" rx="2.5"/>
+    <rect x="9"  y="13.5" width="19" height="5" rx="2.5" opacity=".72"/>
+    <rect x="16" y="20"   width="12" height="5" rx="2.5" opacity=".45"/>
+  </g>
+</svg>

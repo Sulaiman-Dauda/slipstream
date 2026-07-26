@@ -3,10 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <!-- The panel supports both themes and remembers a manual choice, so declare
+         both rather than forcing the UA into dark form controls. -->
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#04222b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#00728f" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Slipstream</title>
-    <script type="module" crossorigin src="/assets/index-C6HQOMdh.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Cj6ukB7M.css">
+    <script type="module" crossorigin src="/assets/index-Dn9FpcoF.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-2mWe0mSd.css">
   </head>
   <body>
     <div id="root"></div>
