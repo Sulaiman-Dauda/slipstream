@@ -46,6 +46,16 @@ func (m *mockRunner) RunStdin(ctx context.Context, stdin, name string, args ...s
 	return m.Run(ctx, name, args...)
 }
 
+// RunCombined serves the same canned outputs as Run; tests that care about
+// stderr-only tools (nginx -V) seed m.outputs under a "<name> -V" key.
+func (m *mockRunner) RunCombined(ctx context.Context, name string, args ...string) (string, error) {
+	if out, ok := m.outputs[name+" "+strings.Join(args, " ")]; ok {
+		m.calls = append(m.calls, append([]string{name}, args...))
+		return out, nil
+	}
+	return m.Run(ctx, name, args...)
+}
+
 func (m *mockRunner) called(name string, wantArgs ...string) bool {
 	for _, c := range m.calls {
 		if c[0] != name {
@@ -531,5 +541,77 @@ func seedCacheEntry(t *testing.T, cacheDir, url string) {
 	}
 	if err := os.WriteFile(p, []byte("cached"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// nginx -V writes its configure line to STDERR and exits 0. A probe that reads
+// only stdout gets "" and silently concludes the build has no HTTP/3 — which is
+// exactly what shipped and was caught on a real Ubuntu 26.04 box (nginx 1.28,
+// --with-http_v3_module) rendering vhosts with no QUIC at all.
+func TestNginxHTTP3ProbeReadsStderr(t *testing.T) {
+	const configureLine = "nginx version: nginx/1.28.3\nconfigure arguments: --with-http_v3_module --with-http_ssl_module"
+
+	// Combined output carries the configure line; plain stdout is empty, as on
+	// a real box.
+	m := &mockRunner{outputs: map[string]string{"nginx -V": configureLine}}
+	a := &Agent{Runner: m}
+	if !a.nginxHasHTTP3() {
+		t.Error("expected HTTP/3 to be detected from combined output")
+	}
+
+	// A build without the module must not be detected.
+	m2 := &mockRunner{outputs: map[string]string{"nginx -V": "configure arguments: --with-http_ssl_module"}}
+	a2 := &Agent{Runner: m2}
+	if a2.nginxHasHTTP3() {
+		t.Error("HTTP/3 must not be reported for a build lacking http_v3_module")
+	}
+
+	// The probe must be cached: nginx cannot gain the module without a restart.
+	before := len(m.calls)
+	a.nginxHasHTTP3()
+	if len(m.calls) != before {
+		t.Error("nginxHasHTTP3 should probe once and cache the result")
+	}
+}
+
+// Asking for a PHP version this host does not have used to sail through
+// validation and fail deep in provisioning with "Unit php8.4-fpm.service not
+// found" — after a Unix user, database and directory tree had been created,
+// and with a rollback that tripped over the same missing unit. Caught on a real
+// Ubuntu 26.04 box, which ships PHP 8.5 and no 8.4.
+func TestCreateSiteRejectsUninstalledPHPVersion(t *testing.T) {
+	root := t.TempDir()
+	bin := t.TempDir()
+	// Both version directories exist — 8.4's is the empty litter a previous
+	// failed provision leaves behind — but only 8.5 has an FPM binary.
+	for _, v := range []string{"8.4", "8.5"} {
+		if err := os.MkdirAll(filepath.Join(root, v, "fpm", "pool.d"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(bin, "php-fpm8.5"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{
+		Paths:  Paths{PHPPoolRoot: root, PHPBinDir: bin, SitesRoot: t.TempDir()},
+		Runner: &mockRunner{},
+	}
+
+	if err := a.validatePHPVersionInstalled("8.4"); err == nil {
+		t.Error("expected 8.4 to be rejected on a host that only has 8.5")
+	} else if !strings.Contains(err.Error(), "8.5") {
+		t.Errorf("error should name the available versions, got: %v", err)
+	}
+	if err := a.validatePHPVersionInstalled("8.5"); err != nil {
+		t.Errorf("8.5 is installed and must be accepted: %v", err)
+	}
+	// Empty means "panel default" and must not be blocked.
+	if err := a.validatePHPVersionInstalled(""); err != nil {
+		t.Errorf("empty version must be allowed: %v", err)
+	}
+	// An unreadable/absent pool root must not block provisioning.
+	a2 := &Agent{Paths: Paths{PHPPoolRoot: filepath.Join(root, "nope"), PHPBinDir: bin}, Runner: &mockRunner{}}
+	if err := a2.validatePHPVersionInstalled("8.4"); err != nil {
+		t.Errorf("must not block when versions cannot be enumerated: %v", err)
 	}
 }

@@ -124,7 +124,9 @@ func (a *Agent) ImportMigration(p rpc.MigrationParams) (rpc.MigrationResult, err
 			_ = a.importDatabaseFile(context.Background(), p.Site.Config.Database.Name, safetyDB)
 		}
 		if p.Site.PHPVersion != "" {
-			_ = a.reloadPHPFPM(context.Background(), p.Site.PHPVersion)
+			// The safety DB re-import restores different rows than FPM has
+			// cached in APCu, which SIGUSR2 preserves — flush, do not reload.
+			_ = a.refreshSiteState(context.Background(), p.Site)
 		}
 	}
 	if newUploads != "" {
@@ -151,6 +153,13 @@ func (a *Agent) ImportMigration(p rpc.MigrationParams) (rpc.MigrationResult, err
 			rollback()
 			return rpc.MigrationResult{}, fmt.Errorf("URL rewrite failed; migration rolled back: %w", err)
 		}
+	}
+	// A migration imports a foreign database and rewrites URLs across it under
+	// wp-cli, whose APCu segment is separate from FPM's. Flush this site's
+	// object cache so the live site serves the migrated options and rewrite
+	// rules instead of whatever APCu held before.
+	if p.Site.PHPVersion != "" && (p.Site.Type == state.SiteWordPress || p.Site.Type == state.SiteWooCommerce) {
+		_ = a.refreshSiteState(ctx, p.Site)
 	}
 	cleanupRelease = false
 	return rpc.MigrationResult{ReleaseID: p.ReleaseID, Files: files, Bytes: size, Skipped: skipped}, nil

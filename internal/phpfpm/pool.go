@@ -17,6 +17,33 @@ func PoolDirFor(phpVersion string) string {
 	return fmt.Sprintf("/etc/php/%s/fpm/pool.d", phpVersion)
 }
 
+// GlobalConfName is the managed [global] FPM fragment. It lives in pool.d
+// (which php-fpm.conf already includes) so we never edit the distro's
+// php-fpm.conf and never fight a package upgrade over it.
+const GlobalConfName = "00-slipstream-global.conf"
+
+// RenderGlobal returns the path and content of the managed [global] FPM
+// configuration for a PHP version.
+//
+// The master process is a single point of failure for every site sharing this
+// PHP version: if enough workers segfault (a bad opcode cache, a broken PECL
+// extension, an OOM-killed child) FPM keeps handing out dead workers and every
+// site 502s until an operator notices. emergency_restart makes the master
+// restart itself instead, which is the difference between a blip and an outage.
+func RenderGlobal(phpVersion string) (path, content string) {
+	return filepath.Join(PoolDirFor(phpVersion), GlobalConfName), `; Managed by Slipstream — do not edit. Changes are detected as drift.
+[global]
+; Self-heal: if 10 children die abnormally inside a minute, restart the master
+; rather than serve 502s from a poisoned pool until someone intervenes.
+emergency_restart_threshold = 10
+emergency_restart_interval = 1m
+; Give a worker 10s to finish its request on reload/restart before SIGKILL.
+process_control_timeout = 10s
+; Master-level FD ceiling; pools raise their own workers separately.
+rlimit_files = 65536
+`
+}
+
 // SocketFor returns the FPM socket path for a site's system user.
 func SocketFor(systemUser string) string {
 	return filepath.Join("/run/slipstream/php", systemUser+".sock")
@@ -182,11 +209,27 @@ pm.max_spare_servers = {{.Workers.MaxSpare}}
 pm.max_requests = {{.Workers.MaxRequests}}
 pm.status_path = /__slipstream/fpm-status
 
+; Accept queue for this pool's socket. The default (511) silently drops
+; connections during a burst before a worker is free to accept them, which
+; nginx surfaces as 502s rather than as queueing. A deep backlog turns a spike
+; into latency instead of errors — the workers are still capped by max_children.
+listen.backlog = 65535
+
+; File-descriptor ceiling per worker. WordPress with a large plugin set plus
+; keepalive upstreams can exceed the default 1024 and fail with "too many open
+; files" in ways that look like random breakage.
+rlimit_files = 65536
+
 request_terminate_timeout = 120s
 catch_workers_output = yes
 
-; Site isolation
-php_admin_value[open_basedir] = {{.Site.RootPath}}:/tmp:/usr/share/php
+; Site isolation. Note /tmp is deliberately NOT on open_basedir: it is shared by
+; every pool of this PHP version (one tenant could read or plant files another
+; writes there, plus a symlink-in-/tmp vector), and it is not needed — the three
+; things PHP would use it for (temp files, uploads, sessions) are all redirected
+; below to this site's own tmp dir. PrivateTmp on the FPM unit would not help:
+; all pools fork from one master and share its namespace.
+php_admin_value[open_basedir] = {{.Site.RootPath}}:/usr/share/php
 php_admin_value[upload_tmp_dir] = {{.TmpDir}}
 php_admin_value[sys_temp_dir] = {{.TmpDir}}
 php_admin_value[session.save_path] = {{.TmpDir}}/sessions
