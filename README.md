@@ -87,28 +87,37 @@ It configures nginx, PHP-FPM, MariaDB and systemd on the machine, so give it a s
 > Slipstream takes over system configuration. **Install it on a fresh server**, not one already
 > running something you care about.
 
-Binary releases are not published yet, so build from source. You need Go 1.25+ and Node 20+ on
-your workstation:
+On a fresh Ubuntu 24.04 or 26.04 server, as root:
+
+```bash
+curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh | sudo bash
+```
+
+That is the whole install. It checks the machine, installs nginx, PHP-FPM, MariaDB, restic,
+certbot and wp-cli, downloads the Slipstream binaries and verifies each against its published
+SHA-256, creates the users and directories, generates the secrets, starts the services, and
+prints a one-time setup URL. Ten minutes, no questions asked along the way.
+
+Open the URL, create the administrator account, and add your first site. Expect a browser
+certificate warning until the panel has a real certificate — it starts on a self-signed one.
+
+<details>
+<summary>Building from source instead</summary>
+
+You need Go 1.25+ and Node 20+ on your workstation:
 
 ```bash
 git clone https://github.com/Sulaiman-Dauda/slipstream.git
 cd slipstream
 make dist                       # builds the UI and linux/amd64 binaries into dist/
-```
-
-Copy the tree to a fresh Ubuntu server and run the installer:
-
-```bash
 scp -r dist installer scripts root@your-server:/root/slipstream/
 ssh root@your-server 'cd /root/slipstream && SLIPSTREAM_LOCAL_BUILD=/root/slipstream/dist bash installer/install.sh'
 ```
 
-It prints a one-time setup URL. Open it, create the administrator account, and add your first
-site. Expect a browser certificate warning until the panel has a real certificate — it starts on
-a self-signed one.
+`SLIPSTREAM_LOCAL_BUILD` skips the download and checksum step and installs the binaries you
+just built. This is the path used to test unreleased changes.
 
-Once a tagged release exists, the installer's default path fetches and checksum-verifies published
-binaries instead, and installation becomes a single `curl … | sudo bash`.
+</details>
 
 Full walkthrough: [docs/getting-started.md](./docs/getting-started.md).
 

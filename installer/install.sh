@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Slipstream installer — Ubuntu 24.04 LTS (amd64).
 #
-#   curl -fsSL https://get.slipstream.example | sudo bash
+#   curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh | sudo bash
 #
 # This script is the bootstrap: it verifies the machine, installs the data
 # plane (nginx, php-fpm, mariadb, restic, certbot, wp-cli), installs the
@@ -9,9 +9,21 @@
 # starts services, and prints the one-time setup URL.
 set -euo pipefail
 
-SLIPSTREAM_VERSION="${SLIPSTREAM_VERSION:-1.0.0}"
 BIN_DIR=/usr/local/bin
-RELEASE_URL="${SLIPSTREAM_RELEASE_URL:-https://releases.slipstream.example/${SLIPSTREAM_VERSION}}"
+SLIPSTREAM_REPO="${SLIPSTREAM_REPO:-Sulaiman-Dauda/slipstream}"
+SLIPSTREAM_VERSION="${SLIPSTREAM_VERSION:-latest}"
+
+# Binaries, checksums and unit files are published as release assets, so the
+# release itself is the download root and no separate hosting is needed. GitHub
+# serves the newest release from /releases/latest/download/<asset> and a pinned
+# one from /releases/download/<tag>/<asset>, with identical asset names — so the
+# only difference between "give me the current version" and "give me v0.2.0" is
+# this prefix. Override SLIPSTREAM_RELEASE_URL to install from anywhere else.
+if [[ "$SLIPSTREAM_VERSION" == "latest" ]]; then
+  RELEASE_URL="${SLIPSTREAM_RELEASE_URL:-https://github.com/${SLIPSTREAM_REPO}/releases/latest/download}"
+else
+  RELEASE_URL="${SLIPSTREAM_RELEASE_URL:-https://github.com/${SLIPSTREAM_REPO}/releases/download/${SLIPSTREAM_VERSION}}"
+fi
 
 log()  { echo -e "\033[1;36m[slipstream]\033[0m $*"; }
 fail() { echo -e "\033[1;31m[slipstream] ERROR:\033[0m $*" >&2; exit 1; }
