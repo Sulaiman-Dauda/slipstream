@@ -236,13 +236,30 @@ if [[ -n "${SLIPSTREAM_LOCAL_BUILD:-}" ]]; then
   log "Installing binaries from local build ${SLIPSTREAM_LOCAL_BUILD}…"
   install -m 0755 "${SLIPSTREAM_LOCAL_BUILD}/panel-api" "${SLIPSTREAM_LOCAL_BUILD}/panel-agent" "${SLIPSTREAM_LOCAL_BUILD}/slipctl" "$BIN_DIR/"
 else
-  log "Downloading Slipstream ${SLIPSTREAM_VERSION}…"
   for bin in panel-api panel-agent slipctl; do
     curl -fsSL -o "$BIN_DIR/$bin" "${RELEASE_URL}/${bin}"
     curl -fsSL -o "/tmp/${bin}.sha256" "${RELEASE_URL}/${bin}.sha256"
     (cd "$BIN_DIR" && sha256sum -c "/tmp/${bin}.sha256" >/dev/null) || fail "checksum mismatch for ${bin}"
     chmod 0755 "$BIN_DIR/$bin"
   done
+
+  # The checksum above only proves the binary matches a file published in the
+  # same release — anyone able to write that release could replace both. Builds
+  # from v0.1.2 onward also carry a GitHub-signed provenance attestation, which
+  # proves the bytes came from this project's release workflow at a specific
+  # commit. Verified here when the GitHub CLI happens to be present; it is not a
+  # dependency of the installer, so its absence is a note rather than a failure.
+  if command -v gh >/dev/null 2>&1 && [[ -z "${SLIPSTREAM_SKIP_ATTESTATION:-}" ]]; then
+    for bin in panel-api panel-agent slipctl; do
+      if gh attestation verify "$BIN_DIR/$bin" --repo "$SLIPSTREAM_REPO" >/dev/null 2>&1; then
+        attested=1
+      else
+        # A release predating attestations, or no network to the verifier.
+        attested=0; break
+      fi
+    done
+    [[ "${attested:-0}" == "1" ]] && log "Build provenance verified against ${SLIPSTREAM_REPO}."
+  fi
 fi
 
 step_done

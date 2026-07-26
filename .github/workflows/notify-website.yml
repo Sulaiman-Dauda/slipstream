@@ -1,12 +1,16 @@
-# Rebuilds the website whenever the documentation changes, so the published docs
-# stay in sync with /docs. The site pulls these files at build time rather than
-# keeping its own copy.
+# Rebuilds slipstreampanel.com whenever the documentation changes. The site
+# pulls /docs from this repo at build time rather than keeping its own copy, so
+# a docs change here needs a build there.
 #
-# Requires a repository secret WEBSITE_DISPATCH_TOKEN: a fine-grained personal
-# access token with permission to dispatch workflows on
-# Sulaiman-Dauda/slipstream-website. Without it this job fails harmlessly and
-# the site can still be rebuilt manually from its Actions tab.
-name: Notify website of docs changes
+# This uses a Cloudflare Pages **deploy hook** rather than a GitHub personal
+# access token. The hook is a single secret URL that can do exactly one thing —
+# start a build of one Pages project. A PAT with repository-dispatch rights
+# would be a far more valuable secret to hold in a public repository, and the
+# previous version of this workflow failed with 401 because no such token was
+# ever set, leaving a permanently red check on main.
+#
+# Secret: CF_PAGES_DEPLOY_HOOK
+name: Rebuild the documentation site
 
 on:
   push:
@@ -14,17 +18,27 @@ on:
     paths:
       - "docs/**"
       - "README.md"
+  workflow_dispatch:
+
+# Nothing here reads or writes repository contents.
+permissions: {}
+
+concurrency:
+  group: docs-rebuild
+  cancel-in-progress: true
 
 jobs:
-  dispatch:
+  rebuild:
     runs-on: ubuntu-latest
-    # A missing token should not show up as a broken build on the main repo.
-    continue-on-error: true
     steps:
-      - name: Trigger website rebuild
+      - name: Trigger the Pages build
+        env:
+          HOOK: ${{ secrets.CF_PAGES_DEPLOY_HOOK }}
         run: |
-          curl -fsSL -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.WEBSITE_DISPATCH_TOKEN }}" \
-            https://api.github.com/repos/Sulaiman-Dauda/slipstream-website/dispatches \
-            -d '{"event_type":"docs-updated"}'
+          if [ -z "$HOOK" ]; then
+            echo "::notice::CF_PAGES_DEPLOY_HOOK is not set — skipping. The site can be rebuilt from the Cloudflare dashboard."
+            exit 0
+          fi
+          # -f so a non-2xx is a real failure rather than a silent success.
+          curl -fsS -X POST "$HOOK" -o /dev/null
+          echo "::notice::Documentation site rebuild triggered."

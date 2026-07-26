@@ -23,7 +23,29 @@ yet flattened out, and one internal reviewer is not an audit. **Run it on server
 rebuild, keep backups off-box, and do not put it in front of anything critical until it has had an
 independent security review.**
 
+## Verifying what you installed
+
+Slipstream is installed with `curl | sudo bash` and its binaries run as root, so
+integrity matters more here than for most projects.
+
+Each release publishes a SHA-256 sum per binary, and the installer checks them.
+On its own that is weak: the sums live in the same release as the binaries, so
+anyone able to write that release could replace both.
+
+From **v0.1.2** every binary also carries a **build provenance attestation**,
+signed by GitHub for this repository's release workflow and stored outside the
+release. Verify one yourself:
+
+```bash
+gh attestation verify /usr/local/bin/panel-agent --repo Sulaiman-Dauda/slipstream
+```
+
+The installer runs this automatically when the GitHub CLI is available. It is
+not a dependency — if `gh` is absent the install proceeds on checksums alone and
+says nothing, rather than pretending to a guarantee it did not make.
+
 ## Reporting a vulnerability
+
 
 **Do not open a public issue for a security problem.**
 
