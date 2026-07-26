@@ -5,15 +5,23 @@ compromise, so please read this before deploying it and before reporting an issu
 
 ## Current status — read this first
 
-Slipstream is a **release candidate**. It has not had an external security review, and it is not
-yet running production traffic anywhere. During roughly two weeks of deliberate pressure-testing,
-21 real defects were found and fixed, several of them security-relevant (an authorization bypass
-between operator accounts, a path that could wipe a site's files, and a read-only SQL console that
-could be bypassed with statement stacking).
+Slipstream is a **release candidate**. It has had **no external security audit** and is not yet
+carrying production traffic anywhere.
+
+It has had one deliberate internal adversarial pass over the privileged surface, which found four
+real issues — all fixed, all verified on a live server, and all documented in
+[docs/security.md](./docs/security.md#findings-from-the-internal-review). The most serious was
+cross-tenant database access through the SQL console: an operator scoped to a single site could
+read and write every other tenant's database.
+
+Before that, roughly two weeks of pressure-testing found and fixed 21 further defects, several
+security-relevant (an authorization bypass between operator accounts, a path that could wipe a
+site's files, a read-only SQL console bypassable by statement stacking).
 
 That work made it considerably better, but the honest reading is that the discovery rate has not
-yet flattened out. **Run it on servers you can afford to rebuild, keep backups off-box, and do not
-put it in front of anything critical until it has had a dedicated security review.**
+yet flattened out, and one internal reviewer is not an audit. **Run it on servers you can afford to
+rebuild, keep backups off-box, and do not put it in front of anything critical until it has had an
+independent security review.**
 
 ## Reporting a vulnerability
 
@@ -71,7 +79,8 @@ Understanding this makes for better reports:
   no root capability. All privileged work goes to `panel-agent` over a root-owned Unix socket,
   authenticated with a shared token, as a fixed set of typed commands — never a shell string.
 - **Sessions are opaque tokens in the database**, not JWTs, so they can be revoked. Passwords are
-  hashed with scrypt in application code.
+  hashed with argon2id, and an unknown account still runs a dummy verify so login timing does not
+  reveal whether it exists.
 - **SFTP is chrooted per site** with no shell.
 - **Managed config is hashed and drift-checked**; edits made outside the panel are detected and
   can be restored.

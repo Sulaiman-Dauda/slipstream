@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest something Slipstream should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Slipstream deliberately does hosting only — no email, DNS, billing or resellers — so a
+        well-argued request can still be declined on scope. Explaining the underlying problem helps
+        more than proposing a specific solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that is hard or impossible today?
+    validations: { required: true }
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What you have in mind
+      description: Optional. A rough idea is fine.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: The workaround, if you have one. This tells us how much it hurts.
