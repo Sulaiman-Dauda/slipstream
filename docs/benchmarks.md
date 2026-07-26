@@ -16,6 +16,8 @@ reinstalled in between. CPU parity was verified before and after with a fixed lo
 
 | | |
 | --- | --- |
+| Measured | 25–26 July 2026 |
+| Versions | Slipstream 0.1.0 vs **CloudPanel CE 2.5.4** |
 | Target | Vultr, 2 vCPU (Haswell), 1.9 GB RAM, Ubuntu 24.04.4 |
 | Workload | WordPress 7.0.2, WooCommerce 10.9.4, TwentyTwentyFive, 102 posts, 50 products |
 | Identical? | yes — same tarballs, SHA-256 verified on both installs |
@@ -30,6 +32,12 @@ WordPress does not send one. Comparing against an untuned competitor would have 
 
 Throughput is measured on loopback so both sides carry the same generator handicap; latency figures
 are also taken over a real 97 ms WAN link.
+
+These numbers describe **two specific versions on one specific day**, and CloudPanel is actively
+developed — a later release may well close a gap shown here. That is why the version and date are
+in the table above and the suite is in the repository: the comparison is meant to be re-run, not
+cited indefinitely. If you re-run it and get different numbers, open an issue with the output and
+this page gets corrected.
 
 ## Cached delivery
 
