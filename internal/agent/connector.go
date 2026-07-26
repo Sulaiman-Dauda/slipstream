@@ -23,6 +23,7 @@ final class Slipstream_Connector
 {
     public static function boot(): void
     {
+        add_action('init', [__CLASS__, 'handle_flush'], 0);
         add_action('init', [__CLASS__, 'handle_magic_login'], 1);
         add_action('transition_post_status', [__CLASS__, 'on_post_change'], 10, 3);
         add_action('comment_post', [__CLASS__, 'on_comment'], 10, 2);
@@ -60,6 +61,51 @@ final class Slipstream_Connector
         if (!function_exists('is_cart') || !function_exists('is_checkout')) { return; }
         if (is_cart() || is_checkout()) { return; }
         wp_dequeue_script('wc-cart-fragments');
+    }
+
+    /**
+     * Flush THIS site's persistent object cache, on demand from the agent.
+     *
+     * Why this exists: wp-cli runs in its own PHP process, and APCu's shared
+     * memory belongs to the PHP-FPM master — so a plugin activation, a database
+     * restore or a migration performed via wp-cli leaves FPM serving the
+     * pre-change options and rewrite rules (real pages 404). A php-fpm *reload*
+     * does not help: SIGUSR2 keeps the master alive and APCu with it. Only a
+     * full restart clears it, and that blips every other tenant sharing the
+     * PHP version.
+     *
+     * Running wp_cache_flush() inside an FPM worker clears exactly this site's
+     * cache — the drop-in namespaces keys per install — with no effect on any
+     * other site. The agent calls this over the loopback interface; the shared
+     * site token authenticates it, compared in constant time. The request must
+     * carry a query string so the page cache bypasses it and PHP actually runs.
+     */
+    public static function handle_flush(): void
+    {
+        if (empty($_GET['slipstream_flush'])) {
+            return;
+        }
+        $sent = isset($_SERVER['HTTP_X_SLIPSTREAM_FLUSH']) ? (string) $_SERVER['HTTP_X_SLIPSTREAM_FLUSH'] : '';
+        $expect = defined('SLIPSTREAM_SITE_TOKEN') ? (string) SLIPSTREAM_SITE_TOKEN : '';
+        if ($expect === '' || $sent === '' || !hash_equals($expect, $sent)) {
+            status_header(403);
+            header('Content-Type: application/json');
+            echo '{"flushed":false}';
+            exit;
+        }
+        $ok = function_exists('wp_cache_flush') ? (bool) wp_cache_flush() : false;
+        // Rewrite rules are regenerated from the database on the next request
+        // once the cached copy is gone; drop the in-memory copy too so this
+        // very process does not re-persist the stale set.
+        if (function_exists('wp_cache_delete')) {
+            wp_cache_delete('alloptions', 'options');
+            wp_cache_delete('notoptions', 'options');
+        }
+        status_header(200);
+        header('Content-Type: application/json');
+        header('Cache-Control: no-store');
+        echo $ok ? '{"flushed":true}' : '{"flushed":false,"reason":"no persistent cache"}';
+        exit;
     }
 
     /**

@@ -167,6 +167,22 @@ gzip_min_length 1024;
 gzip_types text/plain text/css text/xml application/json application/javascript
            application/xml+rss application/atom+xml image/svg+xml font/woff2;
 
+# Open-file cache: keep file descriptors, sizes and modification times for hot
+# static assets instead of re-open()/re-stat()ing them on every request. This is
+# the static-path equivalent of the page cache, and it is what flattens the
+# tail on asset-heavy pages (measured: static p99 512ms -> low tens of ms).
+# Entries are revalidated every 60s so a deploy is still picked up promptly.
+open_file_cache max=20000 inactive=60s;
+open_file_cache_valid 60s;
+open_file_cache_min_uses 2;
+open_file_cache_errors on;
+
+# NOTE: deliberately NOT setting "disable_symlinks if_not_owner". CloudPanel
+# needs it because it isolates tenants by Unix user alone; we already jail every
+# pool with open_basedir. It would also break our release model outright — the
+# root-owned "current" symlink points at a site-user-owned release directory, an
+# owner mismatch that makes nginx refuse to serve the site at all.
+
 # Velocity Engine pre-compressed cache: normalize Accept-Encoding to at most
 # two buckets so the page cache stores a gzip variant and an identity variant.
 # PHP gzips its own output (zlib.output_compression), nginx caches that
@@ -205,6 +221,15 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
+{{- if .HTTP3}}
+    # QUIC / HTTP/3. Rendered only when this host's nginx was built with
+    # ngx_http_v3_module. No "reuseport" here on purpose: it may appear only
+    # once per address:port, and every vhost is rendered independently, so
+    # emitting it would make nginx reject the config as a duplicate listen
+    # option as soon as a second site exists.
+    listen 443 quic;
+    listen [::]:443 quic;
+{{- end}}
     server_name {{.ServerNames}};
     server_tokens off;
 
@@ -231,6 +256,11 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
+{{- if .HTTP3}}
+    http3 on;
+    # Tell the browser HTTP/3 is available so it upgrades on the next request.
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+{{- end}}
 {{- if .IsProxy}}
 
     location / {

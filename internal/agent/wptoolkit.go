@@ -120,14 +120,12 @@ func (a *Agent) WPUpdate(p rpc.WPParams) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("unknown update target %q", p.What)
 	}
-	// Restart (not reload) PHP-FPM. Two caches must be dropped: OPcache, so
-	// workers stop serving pre-update bytecode that can fatal a site when an
-	// update changed function signatures or removed files; and APCu, whose
-	// shared memory a reload (SIGUSR2) preserves. `core update-db` and plugin
-	// updates rewrite options and (for WooCommerce et al.) rewrite rules that
-	// FPM has cached in APCu — a reload would leave the live site serving the
-	// stale, pre-update object cache. A full restart clears both.
-	a.restartPHPFPM(ctx, p.Site.PHPVersion)
+	// Two caches must be dropped. OPcache, so workers stop serving pre-update
+	// bytecode that can fatal a site when an update changed function signatures
+	// or removed files; and APCu, which holds the options and rewrite rules that
+	// `core update-db` and plugin updates rewrite — and which an FPM reload does
+	// NOT clear. refreshSiteState does both, for this site only.
+	_ = a.refreshSiteState(ctx, p.Site)
 	return map[string]string{"updated": p.What}, nil
 }
 

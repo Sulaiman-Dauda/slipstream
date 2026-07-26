@@ -34,6 +34,14 @@ type Input struct {
 	FallbackKey    string
 	ACMEWebroot    string
 	ClientMaxBody  string // e.g. "128m"
+
+	// HTTP3 advertises and serves QUIC on 443/udp. Capability-gated: Ubuntu
+	// 24.04 ships nginx 1.24, which has no ngx_http_v3_module, so this stays
+	// false there and the vhost renders HTTP/2 only. It turns on by itself on
+	// any host whose nginx was built with HTTP/3 (26.04 and newer). We do not
+	// vendor our own nginx to get it — that trades a maintenance burden and a
+	// second security-update stream for a protocol the OS will ship anyway.
+	HTTP3 bool
 }
 
 // Renderer renders configuration files for an engine.

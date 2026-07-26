@@ -67,6 +67,9 @@ type Agent struct {
 	Log      *slog.Logger
 	certMu   sync.Mutex // certbot permits only one process against its state
 	repoMu   sync.Mutex // concurrent `restic init` against the same repo corrupts it
+
+	http3Once sync.Once // nginx HTTP/3 support is probed once per process
+	http3     bool
 }
 
 // New creates an agent with production defaults.
