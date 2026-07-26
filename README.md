@@ -125,6 +125,11 @@ just built. This is the path used to test unreleased changes.
 
 Full walkthrough: [docs/getting-started.md](./docs/getting-started.md).
 
+## Roadmap
+
+What is planned, what is deliberately out of scope, and where help is most useful:
+[ROADMAP.md](./ROADMAP.md).
+
 ## Documentation
 
 | | |
