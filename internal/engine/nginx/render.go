@@ -167,6 +167,22 @@ gzip_min_length 1024;
 gzip_types text/plain text/css text/xml application/json application/javascript
            application/xml+rss application/atom+xml image/svg+xml font/woff2;
 
+# Open-file cache: keep file descriptors, sizes and modification times for hot
+# static assets instead of re-open()/re-stat()ing them on every request. This is
+# the static-path equivalent of the page cache, and it is what flattens the
+# tail on asset-heavy pages (measured: static p99 512ms -> low tens of ms).
+# Entries are revalidated every 60s so a deploy is still picked up promptly.
+open_file_cache max=20000 inactive=60s;
+open_file_cache_valid 60s;
+open_file_cache_min_uses 2;
+open_file_cache_errors on;
+
+# NOTE: deliberately NOT setting "disable_symlinks if_not_owner". CloudPanel
+# needs it because it isolates tenants by Unix user alone; we already jail every
+# pool with open_basedir. It would also break our release model outright — the
+# root-owned "current" symlink points at a site-user-owned release directory, an
+# owner mismatch that makes nginx refuse to serve the site at all.
+
 # Velocity Engine pre-compressed cache: normalize Accept-Encoding to at most
 # two buckets so the page cache stores a gzip variant and an identity variant.
 # PHP gzips its own output (zlib.output_compression), nginx caches that
@@ -185,7 +201,22 @@ fastcgi_cache_path {{.CacheDir}} levels=1:2 keys_zone={{.ZoneName}}:{{.Policy.Zo
                    max_size={{.Policy.MaxSizeMB}}m inactive={{.InactiveSec}}s use_temp_path=off;
 `))
 
-var vhostTmpl = template.Must(template.New("vhost").Parse(
+// secHeaders is repeated into every location that defines an add_header of its
+// own. nginx inherits add_header from the enclosing level ONLY when the current
+// level declares none — so a single server-level block is silently discarded
+// inside `location ~ \.php$` (which sets X-Slipstream-Cache) and inside the
+// static-asset location (which sets Cache-Control). That is every request a
+// real site serves, so the headers looked present in the config and were absent
+// on the wire. Verified on a live box before and after.
+const secHeaders = `{{define "sec"}}
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+{{- if .HTTP3}}
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+{{- end}}{{end}}`
+
+var vhostTmpl = template.Must(template.New("vhost").Parse(secHeaders +
 	`# Managed by Slipstream — do not edit. Changes are detected as drift.
 # Site: {{.Site.Domain}} (id {{.Site.ID}}, type {{.Site.Type}}, profile {{.Site.Profile}})
 
@@ -205,6 +236,15 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
+{{- if .HTTP3}}
+    # QUIC / HTTP/3. Rendered only when this host's nginx was built with
+    # ngx_http_v3_module. No "reuseport" here on purpose: it may appear only
+    # once per address:port, and every vhost is rendered independently, so
+    # emitting it would make nginx reject the config as a duplicate listen
+    # option as soon as a second site exists.
+    listen 443 quic;
+    listen [::]:443 quic;
+{{- end}}
     server_name {{.ServerNames}};
     server_tokens off;
 
@@ -228,9 +268,10 @@ server {
 
     client_max_body_size {{.ClientMaxBody}};
 
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
+{{- if .HTTP3}}
+    http3 on;
+{{- end}}
+{{- template "sec" .}}
 {{- if .IsProxy}}
 
     location / {
@@ -256,6 +297,7 @@ server {
     location ~* \.(css|js|mjs|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot|otf|mp4|webm|pdf)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";
+{{- template "sec" .}}
         access_log off;
         # Serve precompressed .gz produced at deploy time instead of
         # recompressing per request.
@@ -327,6 +369,7 @@ server {
         fastcgi_ignore_headers Cache-Control Expires Set-Cookie;
         add_header X-Slipstream-Cache $upstream_cache_status always;
 {{- end}}
+{{- template "sec" .}}
     }
 {{- end}}
 {{- end}}

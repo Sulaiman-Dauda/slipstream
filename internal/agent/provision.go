@@ -2,11 +2,16 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +22,7 @@ import (
 	"github.com/slipstream-panel/slipstream/internal/state"
 	"github.com/slipstream-panel/slipstream/internal/sysprobe"
 	"github.com/slipstream-panel/slipstream/internal/velocity"
+	"github.com/slipstream-panel/slipstream/internal/version"
 )
 
 var systemUserRe = regexp.MustCompile(`^slip-site-[0-9]+$`)
@@ -62,7 +68,84 @@ func (a *Agent) input(site state.Site) engine.Input {
 	if _, err := os.Stat(fullchain); err == nil {
 		in.CertAvailable = true
 	}
+	in.HTTP3 = a.nginxHasHTTP3()
 	return in
+}
+
+// installedPHPVersions lists the PHP versions actually installed on this host,
+// newest first, e.g. ["8.5", "8.4"].
+//
+// Detection is by FPM binary (/usr/sbin/php-fpm<version>), NOT by the presence
+// of /etc/php/<version>/. A pool directory proves nothing: rendering a pool
+// creates its parents, so a single failed provision for an uninstalled version
+// leaves an empty /etc/php/<version>/fpm/pool.d/ behind forever, and treating
+// that as "installed" reintroduces exactly the failure this guards against.
+func (a *Agent) installedPHPVersions() []string {
+	entries, err := os.ReadDir(a.Paths.PHPPoolRoot)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || !phpVersionRe.MatchString(e.Name()) {
+			continue
+		}
+		if _, err := os.Stat(a.phpFPMBinary(e.Name())); err == nil {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(out)))
+	return out
+}
+
+// phpFPMBinary is the path Debian/Ubuntu installs the FPM binary at. Overridable
+// so tests can point it at a temp tree.
+func (a *Agent) phpFPMBinary(version string) string {
+	dir := a.Paths.PHPBinDir
+	if dir == "" {
+		dir = "/usr/sbin"
+	}
+	return filepath.Join(dir, "php-fpm"+version)
+}
+
+// validatePHPVersionInstalled rejects a version this host cannot serve, naming
+// the ones it can. An empty version means "use the panel default" and is fine.
+func (a *Agent) validatePHPVersionInstalled(version string) error {
+	if version == "" {
+		return nil
+	}
+	installed := a.installedPHPVersions()
+	if len(installed) == 0 {
+		// Can't enumerate (unusual layout, or a test tree) — don't block.
+		return nil
+	}
+	for _, v := range installed {
+		if v == version {
+			return nil
+		}
+	}
+	return fmt.Errorf("PHP %s is not installed on this server (available: %s)",
+		version, strings.Join(installed, ", "))
+}
+
+// nginxHasHTTP3 reports whether the installed nginx was built with
+// ngx_http_v3_module. Ubuntu 24.04 ships nginx 1.24 (no HTTP/3), 26.04 and
+// newer ship a build that has it — so sites gain QUIC when the OS provides it,
+// without Slipstream vendoring its own nginx. The probe result is cached: it
+// cannot change without replacing the binary, which restarts the agent anyway.
+func (a *Agent) nginxHasHTTP3() bool {
+	a.http3Once.Do(func() {
+		// `nginx -V` prints its configure line to STDERR and exits 0, so this
+		// must read combined output — reading stdout alone returns "" and
+		// silently reports "no HTTP/3" even on a build that has it.
+		out, err := a.Runner.RunCombined(context.Background(), "nginx", "-V")
+		if err != nil {
+			a.http3 = false
+			return
+		}
+		a.http3 = strings.Contains(out, "http_v3_module")
+	})
+	return a.http3
 }
 
 // renderSite writes all managed config for a site and reloads services.
@@ -131,6 +214,21 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 		if a.Paths.PHPPoolRoot != "/etc/php" {
 			poolPath = filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", site.SystemUser+".conf")
 		}
+		// Managed [global] FPM fragment (master self-heal, FD limits). Written
+		// alongside the pool so it exists before the pool is loaded, and
+		// re-asserted on every render so drift is corrected.
+		gPath, gContent := phpfpm.RenderGlobal(site.PHPVersion)
+		if a.Paths.PHPPoolRoot != "/etc/php" {
+			gPath = filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", phpfpm.GlobalConfName)
+		}
+		gOld, gErr := os.ReadFile(gPath)
+		priors[gPath] = prior{content: gOld, existed: gErr == nil}
+		gmf, err := writeManaged(gPath, gContent, 0o644)
+		if err != nil {
+			rollback()
+			return nil, err
+		}
+		managed = append(managed, gmf)
 		old, readErr := os.ReadFile(poolPath)
 		priors[poolPath] = prior{content: old, existed: readErr == nil}
 		mf, err := writeManaged(poolPath, poolContent, 0o644)
@@ -178,6 +276,14 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		site.RootPath = filepath.Join(a.Paths.SitesRoot, site.Domain)
 	}
 	if err := a.validateSiteRoot(site); err != nil {
+		return rpc.CreateSiteResult{}, err
+	}
+	// Refuse a PHP version this machine does not have BEFORE creating a Unix
+	// user, a database and a directory tree. Asking for 8.4 on a host that ships
+	// 8.5 otherwise fails much later with "Unit php8.4-fpm.service not found",
+	// and the rollback then trips over the same missing unit and reports
+	// "rollback incomplete" — a confusing failure for what is a simple typo.
+	if err := a.validatePHPVersionInstalled(site.PHPVersion); err != nil {
 		return rpc.CreateSiteResult{}, err
 	}
 
@@ -266,9 +372,15 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		if _, err := a.WPObjectCache(rpc.WPParams{Site: site, Enable: true}); err != nil {
 			a.Log.Warn("object cache setup failed", "site", site.Domain, "err", err)
 		}
-		// Commerce sites: tame the cart-fragments AJAX that punches through
-		// the page cache on every anonymous page.
+		// Commerce sites: actually install WooCommerce, then tame the
+		// cart-fragments AJAX that punches through the page cache on every
+		// anonymous page. Without the install step the "woocommerce" site type
+		// is just WordPress with a dangling SLIPSTREAM_DISABLE_CART_FRAGMENTS
+		// constant — /shop, /cart and /product/* all 404.
 		if site.Type == state.SiteWooCommerce || site.Profile == state.ProfileCommerce {
+			if err := a.installWooCommerce(ctx, site, releaseDir); err != nil {
+				return result, fmt.Errorf("woocommerce install: %w", err)
+			}
 			run := func(args ...string) { a.wp(ctx, site, args...) }
 			run("config", "set", "SLIPSTREAM_DISABLE_CART_FRAGMENTS", "true", "--raw")
 		}
@@ -419,6 +531,132 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 	return os.WriteFile(filepath.Join(muDir, "slipstream-connector.php"), []byte(ConnectorPHP), 0o644)
 }
 
+// installWooCommerce installs and activates WooCommerce on an already-installed
+// WordPress, creates its pages (shop/cart/checkout/my-account) and flushes the
+// rewrite rules so /shop and /product/* resolve instead of 404ing. It finishes
+// by clearing the APCu object cache: the plugin activation and page creation
+// run under wp-cli, whose APCu segment is separate from PHP-FPM's, so without
+// this the live site keeps serving the pre-WooCommerce rewrite state (real
+// pages 404) until FPM is restarted for some other reason.
+func (a *Agent) installWooCommerce(ctx context.Context, site state.Site, dir string) error {
+	run := func(args ...string) error {
+		argv := append([]string{"-u", site.SystemUser, "--", "wp", "--path=" + dir}, args...)
+		_, err := a.Runner.Run(ctx, "runuser", argv...)
+		return err
+	}
+	if err := run("plugin", "install", "woocommerce", "--activate"); err != nil {
+		return fmt.Errorf("wp plugin install woocommerce: %w", err)
+	}
+	// Activation registers the product post type and Woo's rewrite rules, and
+	// (via wc_create_pages on activation) creates the shop/cart/checkout/
+	// my-account pages. Flush so those rules are persisted to the DB option.
+	if err := run("rewrite", "flush"); err != nil {
+		return fmt.Errorf("wp rewrite flush: %w", err)
+	}
+	// A reload is enough here and a per-site flush would be wrong: this runs
+	// during initial provisioning, BEFORE renderSite has written the vhost, so
+	// a loopback request for this domain lands on the default server (the panel
+	// itself) rather than the site. There is also nothing to flush — a brand-new
+	// site has served no requests, so its FPM workers hold no cached state. The
+	// per-site flush is for later mutations (updates, restores, migrations),
+	// where the vhost exists and APCu genuinely holds stale rows.
+	if err := a.reloadPHPFPM(ctx, site.PHPVersion); err != nil {
+		a.Log.Warn("php-fpm reload after woocommerce install failed", "site", site.Domain, "err", err)
+	}
+	return nil
+}
+
+// restartPHPFPM fully restarts the FPM service, dropping APCu shared memory
+// (which a reload preserves). This is the blunt instrument: the service is
+// shared by every site on this PHP version, so it briefly interrupts other
+// tenants. Prefer refreshSiteState, which achieves the same thing for one site.
+func (a *Agent) restartPHPFPM(ctx context.Context, phpVersion string) error {
+	_, err := a.Runner.Run(ctx, "systemctl", "restart", "php"+phpVersion+"-fpm")
+	return err
+}
+
+// refreshSiteState makes an out-of-band change to a site's database or files
+// visible to the live site, touching only that site.
+//
+// Two caches hide such a change. OPcache holds compiled bytecode for the old
+// files; an FPM reload clears it. APCu holds the site's WordPress object cache
+// — options, rewrite rules — and a reload does NOT clear it, because SIGUSR2
+// leaves the master (and its shared memory) alive. Restarting the service does
+// clear it but interrupts every other tenant.
+//
+// So: ask the site itself to flush, by calling the connector through its own
+// FPM pool over the loopback interface. That clears exactly this site's object
+// cache. Then reload FPM for OPcache. Only if the flush cannot be delivered do
+// we fall back to the service-wide restart, so correctness never depends on the
+// connector being reachable.
+func (a *Agent) refreshSiteState(ctx context.Context, site state.Site) error {
+	if site.PHPVersion == "" {
+		return nil
+	}
+	if site.Type == state.SiteWordPress || site.Type == state.SiteWooCommerce {
+		if err := a.flushObjectCache(ctx, site); err == nil {
+			// Object cache cleared for this site; reload handles OPcache.
+			return a.reloadPHPFPM(ctx, site.PHPVersion)
+		} else {
+			a.Log.Warn("per-site object-cache flush failed; falling back to an FPM restart",
+				"site", site.Domain, "err", err)
+		}
+	}
+	return a.restartPHPFPM(ctx, site.PHPVersion)
+}
+
+// flushObjectCache asks the site's connector to run wp_cache_flush() inside one
+// of its own FPM workers. The request goes to the loopback address with the
+// site's Host header so nginx routes it to the right vhost and pool; the query
+// string forces a page-cache bypass so PHP actually executes; the site token
+// authenticates it and is sent as a header so it stays out of access logs.
+func (a *Agent) flushObjectCache(ctx context.Context, site state.Site) error {
+	token, err := a.wp(ctx, site, "config", "get", "SLIPSTREAM_SITE_TOKEN")
+	if err != nil {
+		return fmt.Errorf("read site token: %w", err)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return fmt.Errorf("site has no connector token")
+	}
+
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			// Always connect to this machine, whatever the domain resolves to
+			// publicly — the site may not be in DNS yet, or may point elsewhere.
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, "127.0.0.1:443")
+			},
+			// The vhost may still be on the self-signed bootstrap certificate.
+			// This is a loopback call to our own machine, so certificate
+			// identity adds nothing: the site token is what authenticates it.
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://"+site.Domain+"/?slipstream_flush=1", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Slipstream-Flush", token)
+	req.Header.Set("User-Agent", "slipstream-agent/"+version.Version)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("connector flush returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !strings.Contains(string(body), `"flushed":true`) {
+		return fmt.Errorf("connector did not flush: %s", strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 // DeleteSite tears down a site completely.
 func (a *Agent) DeleteSite(p rpc.SiteRef) (map[string]any, error) {
 	ctx := context.Background()
@@ -452,6 +690,12 @@ func (a *Agent) DeleteSite(p rpc.SiteRef) (map[string]any, error) {
 	}
 	if err := os.RemoveAll(filepath.Join(a.Paths.CacheRoot, velocity.SanitizeCacheDirName(site.Domain))); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove cache: %w", err))
+	}
+	// Access/error logs outlive the site otherwise: every created-and-deleted
+	// site left a directory in /var/log/slipstream forever, and logrotate has
+	// nothing to prune once the vhost that wrote them is gone.
+	if err := os.RemoveAll(filepath.Join(a.Paths.LogRoot, site.Domain)); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove logs: %w", err))
 	}
 	if err := os.RemoveAll(site.RootPath); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove site files: %w", err))

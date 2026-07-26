@@ -34,6 +34,7 @@ type Paths struct {
 	NginxSites   string // /etc/nginx/sites-enabled
 	NginxConfDir string // /etc/nginx/conf.d
 	PHPPoolRoot  string // /etc/php (…/<ver>/fpm/pool.d)
+	PHPBinDir    string // /usr/sbin (php-fpm<ver>) — where "is it installed?" is decided
 	PHPSocketDir string // /run/slipstream/php
 	WorkDir      string // /var/lib/slipstream/work (restore tests, staging dumps)
 }
@@ -54,6 +55,7 @@ func DefaultPaths() Paths {
 		NginxSites:   "/etc/nginx/sites-enabled",
 		NginxConfDir: "/etc/nginx/conf.d",
 		PHPPoolRoot:  "/etc/php",
+		PHPBinDir:    "/usr/sbin",
 		PHPSocketDir: "/run/slipstream/php",
 		WorkDir:      "/var/lib/slipstream/work",
 	}
@@ -67,6 +69,9 @@ type Agent struct {
 	Log      *slog.Logger
 	certMu   sync.Mutex // certbot permits only one process against its state
 	repoMu   sync.Mutex // concurrent `restic init` against the same repo corrupts it
+
+	http3Once sync.Once // nginx HTTP/3 support is probed once per process
+	http3     bool
 }
 
 // New creates an agent with production defaults.

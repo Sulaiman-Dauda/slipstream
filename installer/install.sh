@@ -128,6 +128,76 @@ else
   done
 fi
 
+# ---------- kernel + nginx worker tuning ----------
+# These live outside the panel's managed config because they are main/events
+# level (worker_connections cannot be set from an http-level include) or kernel
+# level. Everything http-level is rendered by the agent into conf.d instead.
+log "Tuning kernel and nginx workers…"
+
+# Kernel: the defaults are sized for a desktop, not a server absorbing a spike.
+# Without these the accept queue overflows during a burst and the kernel drops
+# SYNs — which surfaces as connection errors long before any worker is busy.
+cat > /etc/sysctl.d/60-slipstream.conf <<'SYSCTL'
+# Managed by Slipstream.
+# Accept-queue depth. nginx passes a large backlog to listen(2), but the kernel
+# silently clamps it to somaxconn; 511 (the old default) drops connections under
+# a spike that the server could otherwise have queued and served.
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+# Burst headroom between the NIC and the network stack.
+net.core.netdev_max_backlog = 16384
+# Reuse TIME_WAIT sockets for outbound connections (safe; this is not the
+# long-removed tcp_tw_recycle, which broke NAT).
+net.ipv4.tcp_tw_reuse = 1
+# A cache hit is a small response: let it go out without waiting on slow start
+# for a second round trip where the receiver window allows.
+net.ipv4.tcp_slow_start_after_idle = 0
+# Ephemeral ports for upstream/FPM connections.
+net.ipv4.ip_local_port_range = 1024 65535
+# System-wide file handles (per-service limits are set separately).
+fs.file-max = 500000
+SYSCTL
+sysctl -p /etc/sysctl.d/60-slipstream.conf >/dev/null 2>&1 || true
+
+# nginx main/events level. Ubuntu ships worker_connections 768, so two workers
+# cap the box at ~1536 concurrent connections — reached well before the cache
+# runs out of capacity. Patch idempotently and keep a backup; if the edit ever
+# produces a config nginx rejects, restore it rather than leave the box broken.
+NGINX_CONF=/etc/nginx/nginx.conf
+if ! grep -q "slipstream-tuned" "$NGINX_CONF"; then
+  cp -a "$NGINX_CONF" "${NGINX_CONF}.slipstream-pre"
+  # events{} block: raise the per-worker connection ceiling and accept as many
+  # ready connections per wakeup as are pending.
+  # Only worker_connections is changed here. multi_accept was measured on a
+  # 2-core box and made no reproducible difference (sustained 9529 vs 9438 rps,
+  # static 21216 vs 21447 — the runs overlap), so it stays at the distro
+  # default rather than becoming config we cannot justify.
+  sed -i 's/^\([[:space:]]*\)worker_connections[[:space:]]\+[0-9]\+;/\1worker_connections 4096;/' "$NGINX_CONF"
+  # main level: a worker needs an FD per connection plus upstreams and files.
+  sed -i '0,/^worker_processes/s//# slipstream-tuned\nworker_rlimit_nofile 65535;\nworker_processes/' "$NGINX_CONF"
+  if ! nginx -t >/dev/null 2>&1; then
+    log "nginx rejected the tuned config — restoring the original"
+    mv -f "${NGINX_CONF}.slipstream-pre" "$NGINX_CONF"
+    nginx -t >/dev/null || fail "nginx config is broken and the backup did not restore it"
+  fi
+fi
+
+# Kernel TLS offload (ssl_conf_command Options KTLS) is deliberately NOT enabled.
+# CloudPanel ships it, so we implemented it, verified the kernel really was doing
+# the encryption (/proc/net/tls_stat TlsTxSw incrementing) — and then measured it
+# as a large net LOSS on this workload:
+#
+#     KTLS on : sustained 6642 rps, static 14246 rps
+#     KTLS off: sustained 9177 rps, static 19601 rps
+#
+# ~28% off cached throughput and ~31% off static, reproduced with multi_accept
+# both on and off. KTLS pays for itself on large sequential transfers; a page
+# cache serves many small responses, where the per-record kernel transitions
+# cost more than the copy it avoids. Left off, with the numbers, so nobody
+# "optimises" it back in without re-measuring.
+# Any leftover file from an earlier install is removed.
+rm -f /etc/nginx/conf.d/slipstream-ktls.conf
+
 # ---------- base nginx configuration ----------
 log "Configuring nginx base…"
 rm -f /etc/nginx/sites-enabled/default
@@ -181,12 +251,28 @@ done
 systemctl daemon-reload
 systemctl enable --now slipstream-api.socket slipstream-agent slipstream-api nginx "php${PHP_VERSION}-fpm" >/dev/null
 
+# apt starts nginx when the package is installed — before the bootstrap vhost
+# above exists. `enable --now` is therefore a no-op on an already-running
+# master, so the :443 listener declared in that vhost never binds and the setup
+# URL printed at the end of this script is unreachable. Reload to load it.
+systemctl reload nginx >/dev/null 2>&1 || systemctl restart nginx >/dev/null 2>&1 || true
+for _ in $(seq 1 10); do
+  ss -ltn 'sport = :443' | grep -q LISTEN && break
+  sleep 1
+done
+ss -ltn 'sport = :443' | grep -q LISTEN || fail "nginx is not listening on 443 — the panel would be unreachable"
+
 # ---------- firewall ----------
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   log "Opening firewall ports 22, 80 and 443…"
   ufw allow 22/tcp >/dev/null
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
+  # QUIC/HTTP-3 is UDP. On a build with ngx_http_v3_module the vhost advertises
+  # Alt-Svc, so browsers try 443/udp; without this they hang on that attempt and
+  # silently fall back to TCP, which is slower than never advertising at all.
+  # Harmless on builds without HTTP/3 — nothing listens on the port.
+  ufw allow 443/udp >/dev/null
 fi
 
 # Per-site SFTP: each site root is a root-owned chroot whose children remain
@@ -203,6 +289,48 @@ Match User slip-site-*
 SSHD
 sshd -t
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+
+# ---------- log rotation ----------
+# Without this the panel is the only thing on the box writing unbounded logs:
+# every other service here ships a logrotate config. A busy site produces
+# hundreds of MB of access log a week, and a full disk takes every site down —
+# so this is a availability control, not housekeeping.
+log "Installing log rotation…"
+cat > /etc/logrotate.d/slipstream <<'ROTATE'
+# Managed by Slipstream.
+# Per-site nginx access/error logs.
+/var/log/slipstream/*/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    # Copy-and-truncate: nginx holds these open, and renaming without telling it
+    # leaves it writing to an unlinked inode (disk fills with an invisible file).
+    # copytruncate avoids needing a reload per rotation across every vhost.
+    copytruncate
+}
+
+# Per-site PHP error logs live inside the site tree so the owner can read them.
+/srv/sites/*/logs/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    # Keep the site user as owner; these are read through the file manager.
+    su root root
+}
+ROTATE
+chmod 0644 /etc/logrotate.d/slipstream
+# Fail loudly here rather than discovering a broken config weeks later when the
+# disk is full: logrotate parses every file in logrotate.d on each run.
+logrotate --debug /etc/logrotate.d/slipstream >/dev/null 2>&1 || \
+  log "warning: logrotate rejected the Slipstream config — check /etc/logrotate.d/slipstream"
 
 # ---------- certificate renewal ----------
 # certbot's timer renews certificates, but without a deploy hook nginx keeps
