@@ -5,6 +5,26 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-07-26
+
+### Added
+- **Build provenance attestations.** Every released binary now carries a
+  GitHub-signed statement proving it was built by this repository's release
+  workflow at a specific commit. Verify with
+  `gh attestation verify panel-agent --repo Sulaiman-Dauda/slipstream`; the
+  installer checks it automatically when the GitHub CLI is present.
+- CodeQL analysis for Go and TypeScript.
+- `ROADMAP.md`, and a written review standard in `.github/REVIEW_GUIDELINES.md`.
+
+### Changed
+- All GitHub Actions pinned to immutable commit SHAs.
+- Every workflow declares explicit `permissions`.
+- Dependency updates grouped by minor/patch, with majors kept separate.
+
+### Fixed
+- The documentation-site rebuild required a personal access token that was never
+  configured, so it failed on every docs change.
+
 ## [0.1.1] — 2026-07-26
 
 ### Added
