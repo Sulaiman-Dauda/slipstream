@@ -1,5 +1,7 @@
 # Slipstream
 
+**[slipstreampanel.com](https://slipstreampanel.com)** · [Documentation](https://slipstreampanel.com/guides/readme/) · [Benchmarks](https://slipstreampanel.com/guides/benchmarks/)
+
 A hosting control panel for people who care what their sites' p99 looks like.
 
 One command installs it. One click launches a WordPress, WooCommerce, PHP, Laravel, static or

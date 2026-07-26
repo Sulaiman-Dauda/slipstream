@@ -1,8 +1,31 @@
 /bin/
 /dist/
 ui/node_modules/
+coverage.out
+
+# State databases (the panel's own store, and anything a local run drops)
 *.db
 *.db-wal
 *.db-shm
+
+# Secrets and credentials — never committed. The bare `.env` alone missed
+# .env.local / .env.production, which is the usual way one gets committed.
 .env
-coverage.out
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+agent.token
+*.token
+id_rsa*
+.netrc
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

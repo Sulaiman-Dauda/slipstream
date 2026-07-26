@@ -1,5 +1,7 @@
 # Documentation
 
+These pages are published at **[slipstreampanel.com](https://slipstreampanel.com)**.
+
 Slipstream is a self-hosted hosting control panel focused on performance: sites arrive cached,
 tuned and isolated, and a deployment that makes a site slower is refused rather than shipped.
 
