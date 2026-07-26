@@ -5,6 +5,18 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-07-26
+
+### Added
+- Installer progress display: a spinner per phase, a tick with its measured
+  duration, and a full log at `/var/log/slipstream-install.log`. Degrades to
+  plain lines when not attached to a terminal.
+- `https://get.slipstreampanel.com` as the install URL, with `/vX.Y.Z` to pin.
+
+### Fixed
+- Installer output no longer interleaves apt, systemctl and nginx messages with
+  the progress display; a failure now prints the tail of the log.
+
 ## [0.1.0] — 2026-07-26
 
 First tagged release. Everything below was built and verified before this tag; the
