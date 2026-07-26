@@ -34,6 +34,7 @@ type Paths struct {
 	NginxSites   string // /etc/nginx/sites-enabled
 	NginxConfDir string // /etc/nginx/conf.d
 	PHPPoolRoot  string // /etc/php (…/<ver>/fpm/pool.d)
+	PHPBinDir    string // /usr/sbin (php-fpm<ver>) — where "is it installed?" is decided
 	PHPSocketDir string // /run/slipstream/php
 	WorkDir      string // /var/lib/slipstream/work (restore tests, staging dumps)
 }
@@ -54,6 +55,7 @@ func DefaultPaths() Paths {
 		NginxSites:   "/etc/nginx/sites-enabled",
 		NginxConfDir: "/etc/nginx/conf.d",
 		PHPPoolRoot:  "/etc/php",
+		PHPBinDir:    "/usr/sbin",
 		PHPSocketDir: "/run/slipstream/php",
 		WorkDir:      "/var/lib/slipstream/work",
 	}

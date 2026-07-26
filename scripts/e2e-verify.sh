@@ -17,6 +17,12 @@ IP="${IP:?set IP=<public ip> so sites resolve via sslip.io}"
 EMAIL="${PANEL_EMAIL:-abiodauda@gmail.com}"
 PW="${PANEL_PW:?set PANEL_PW=<admin password>}"
 DASH="${IP//./-}"
+# Never hardcode a PHP version: 24.04 ships 8.4, 26.04 ships 8.5. Ask the host
+# what it actually has, so this suite exercises the real supported stack rather
+# than failing with "Unit php8.4-fpm.service not found" on a newer release.
+PHPV="${PHPV:-$(ls -1 /etc/php 2>/dev/null | grep -E '^8\.[0-9]$' | sort -Vr | head -1)}"
+PHPV="${PHPV:-8.4}"
+echo "  using PHP $PHPV"
 J=$(mktemp)
 PASS=0; FAIL=0; FAILED=()
 
@@ -108,7 +114,7 @@ run_type "static" "static.$DASH.sslip.io" \
   "{\"domain\":\"static.$DASH.sslip.io\",\"type\":\"static\"}" "/" 200
 # php: inject an index.php so we actually exercise PHP execution (empty = 403).
 run_type "php" "php.$DASH.sslip.io" \
-  "{\"domain\":\"php.$DASH.sslip.io\",\"type\":\"php\",\"php_version\":\"8.4\"}" "/" 200 \
+  "{\"domain\":\"php.$DASH.sslip.io\",\"type\":\"php\",\"php_version\":\"$PHPV\"}" "/" 200 \
   'printf "%s" "<?php echo \"php-exec-ok\";" > /srv/sites/$dom/current/index.php; chown $U:$U /srv/sites/$dom/current/index.php'
 # proxy: stand up a real upstream so we test forwarding, not a bad-gateway.
 python3 -m http.server 9099 --bind 127.0.0.1 >/dev/null 2>&1 & PYP=$!
@@ -117,16 +123,16 @@ run_type "proxy" "proxy.$DASH.sslip.io" \
 kill $PYP 2>/dev/null
 # laravel: fresh site has no app code deployed yet, so any non-5xx (200/404) is fine.
 run_type "laravel" "laravel.$DASH.sslip.io" \
-  "{\"domain\":\"laravel.$DASH.sslip.io\",\"type\":\"laravel\",\"php_version\":\"8.4\"}" "/" ok
+  "{\"domain\":\"laravel.$DASH.sslip.io\",\"type\":\"laravel\",\"php_version\":\"$PHPV\"}" "/" ok
 run_type "wordpress" "wp.$DASH.sslip.io" \
-  "{\"domain\":\"wp.$DASH.sslip.io\",\"type\":\"wordpress\",\"php_version\":\"8.4\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\"}" "/" 200
+  "{\"domain\":\"wp.$DASH.sslip.io\",\"type\":\"wordpress\",\"php_version\":\"$PHPV\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\"}" "/" 200
 
 # ---- WooCommerce: the PRODUCT must install WooCommerce itself and serve its
 # pages. Do NOT install the plugin from the test — that would test our own setup
 # instead of the product and mask a provisioner that ships plain WordPress.
 echo "--- site type: woocommerce (product installs Woo, shop/cart resolve) ---"
 WOO="shop.$DASH.sslip.io"
-WID=$(create_site "{\"domain\":\"$WOO\",\"type\":\"woocommerce\",\"profile\":\"commerce\",\"php_version\":\"8.4\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\",\"object_cache\":true}")
+WID=$(create_site "{\"domain\":\"$WOO\",\"type\":\"woocommerce\",\"profile\":\"commerce\",\"php_version\":\"$PHPV\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\",\"object_cache\":true}")
 if [ -n "$WID" ]; then
   st=$(wait_active "$WID" 180); check "woocommerce provisions" "$st" "active"
   U=$(site_get "$WID" | jqget "['system_user']"); P="/srv/sites/$WOO/current"
@@ -144,7 +150,7 @@ fi
 # ---- WordPress feature suite on a fresh WP site ----
 echo "--- WordPress feature suite ---"
 FS="feat.$DASH.sslip.io"
-FID=$(create_site "{\"domain\":\"$FS\",\"type\":\"wordpress\",\"php_version\":\"8.4\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\"}")
+FID=$(create_site "{\"domain\":\"$FS\",\"type\":\"wordpress\",\"php_version\":\"$PHPV\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\"}")
 st=$(wait_active "$FID" 120); check "feature-site provisions" "$st" "active"
 if [ "$st" = active ]; then
   # cache: warm then expect HIT

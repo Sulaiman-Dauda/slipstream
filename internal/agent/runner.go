@@ -14,9 +14,14 @@ import (
 // user-supplied names (domains, database names) from becoming injection.
 // RunStdin additionally feeds data on stdin, used to keep secrets (DB and
 // admin passwords) out of argv / /proc/<pid>/cmdline.
+// RunCombined returns stdout and stderr together, for the handful of tools
+// that report on stderr even when they succeed (`nginx -V` prints its whole
+// configure line there and exits 0). Run would return an empty string for
+// those, which silently reads as "feature absent".
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) (stdout string, err error)
 	RunStdin(ctx context.Context, stdin string, name string, args ...string) (stdout string, err error)
+	RunCombined(ctx context.Context, name string, args ...string) (output string, err error)
 }
 
 // ExecRunner runs real commands with a hard timeout.
@@ -48,6 +53,24 @@ func (r ExecRunner) Run(ctx context.Context, name string, args ...string) (strin
 }
 
 // RunStdin executes name with args, feeding stdin, returning trimmed stdout.
+// RunCombined executes name with args and returns trimmed stdout+stderr.
+func (r ExecRunner) RunCombined(ctx context.Context, name string, args ...string) (string, error) {
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	var buf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	if err := cmd.Run(); err != nil {
+		return strings.TrimSpace(buf.String()), fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(buf.String()), nil
+}
+
 func (r ExecRunner) RunStdin(ctx context.Context, stdin, name string, args ...string) (string, error) {
 	timeout := r.Timeout
 	if timeout <= 0 {

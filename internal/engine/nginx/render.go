@@ -201,7 +201,22 @@ fastcgi_cache_path {{.CacheDir}} levels=1:2 keys_zone={{.ZoneName}}:{{.Policy.Zo
                    max_size={{.Policy.MaxSizeMB}}m inactive={{.InactiveSec}}s use_temp_path=off;
 `))
 
-var vhostTmpl = template.Must(template.New("vhost").Parse(
+// secHeaders is repeated into every location that defines an add_header of its
+// own. nginx inherits add_header from the enclosing level ONLY when the current
+// level declares none — so a single server-level block is silently discarded
+// inside `location ~ \.php$` (which sets X-Slipstream-Cache) and inside the
+// static-asset location (which sets Cache-Control). That is every request a
+// real site serves, so the headers looked present in the config and were absent
+// on the wire. Verified on a live box before and after.
+const secHeaders = `{{define "sec"}}
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+{{- if .HTTP3}}
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+{{- end}}{{end}}`
+
+var vhostTmpl = template.Must(template.New("vhost").Parse(secHeaders +
 	`# Managed by Slipstream — do not edit. Changes are detected as drift.
 # Site: {{.Site.Domain}} (id {{.Site.ID}}, type {{.Site.Type}}, profile {{.Site.Profile}})
 
@@ -253,14 +268,10 @@ server {
 
     client_max_body_size {{.ClientMaxBody}};
 
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
 {{- if .HTTP3}}
     http3 on;
-    # Tell the browser HTTP/3 is available so it upgrades on the next request.
-    add_header Alt-Svc 'h3=":443"; ma=86400' always;
 {{- end}}
+{{- template "sec" .}}
 {{- if .IsProxy}}
 
     location / {
@@ -286,6 +297,7 @@ server {
     location ~* \.(css|js|mjs|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot|otf|mp4|webm|pdf)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";
+{{- template "sec" .}}
         access_log off;
         # Serve precompressed .gz produced at deploy time instead of
         # recompressing per request.
@@ -357,6 +369,7 @@ server {
         fastcgi_ignore_headers Cache-Control Expires Set-Cookie;
         add_header X-Slipstream-Cache $upstream_cache_status always;
 {{- end}}
+{{- template "sec" .}}
     }
 {{- end}}
 {{- end}}

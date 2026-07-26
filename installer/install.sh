@@ -268,6 +268,11 @@ if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   ufw allow 22/tcp >/dev/null
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
+  # QUIC/HTTP-3 is UDP. On a build with ngx_http_v3_module the vhost advertises
+  # Alt-Svc, so browsers try 443/udp; without this they hang on that attempt and
+  # silently fall back to TCP, which is slower than never advertising at all.
+  # Harmless on builds without HTTP/3 — nothing listens on the port.
+  ufw allow 443/udp >/dev/null
 fi
 
 # Per-site SFTP: each site root is a root-owned chroot whose children remain

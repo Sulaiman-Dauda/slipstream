@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,6 +72,62 @@ func (a *Agent) input(site state.Site) engine.Input {
 	return in
 }
 
+// installedPHPVersions lists the PHP versions actually installed on this host,
+// newest first, e.g. ["8.5", "8.4"].
+//
+// Detection is by FPM binary (/usr/sbin/php-fpm<version>), NOT by the presence
+// of /etc/php/<version>/. A pool directory proves nothing: rendering a pool
+// creates its parents, so a single failed provision for an uninstalled version
+// leaves an empty /etc/php/<version>/fpm/pool.d/ behind forever, and treating
+// that as "installed" reintroduces exactly the failure this guards against.
+func (a *Agent) installedPHPVersions() []string {
+	entries, err := os.ReadDir(a.Paths.PHPPoolRoot)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || !phpVersionRe.MatchString(e.Name()) {
+			continue
+		}
+		if _, err := os.Stat(a.phpFPMBinary(e.Name())); err == nil {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(out)))
+	return out
+}
+
+// phpFPMBinary is the path Debian/Ubuntu installs the FPM binary at. Overridable
+// so tests can point it at a temp tree.
+func (a *Agent) phpFPMBinary(version string) string {
+	dir := a.Paths.PHPBinDir
+	if dir == "" {
+		dir = "/usr/sbin"
+	}
+	return filepath.Join(dir, "php-fpm"+version)
+}
+
+// validatePHPVersionInstalled rejects a version this host cannot serve, naming
+// the ones it can. An empty version means "use the panel default" and is fine.
+func (a *Agent) validatePHPVersionInstalled(version string) error {
+	if version == "" {
+		return nil
+	}
+	installed := a.installedPHPVersions()
+	if len(installed) == 0 {
+		// Can't enumerate (unusual layout, or a test tree) — don't block.
+		return nil
+	}
+	for _, v := range installed {
+		if v == version {
+			return nil
+		}
+	}
+	return fmt.Errorf("PHP %s is not installed on this server (available: %s)",
+		version, strings.Join(installed, ", "))
+}
+
 // nginxHasHTTP3 reports whether the installed nginx was built with
 // ngx_http_v3_module. Ubuntu 24.04 ships nginx 1.24 (no HTTP/3), 26.04 and
 // newer ship a build that has it — so sites gain QUIC when the OS provides it,
@@ -78,8 +135,10 @@ func (a *Agent) input(site state.Site) engine.Input {
 // cannot change without replacing the binary, which restarts the agent anyway.
 func (a *Agent) nginxHasHTTP3() bool {
 	a.http3Once.Do(func() {
-		// `nginx -V` prints the configure line to stderr.
-		out, err := a.Runner.Run(context.Background(), "nginx", "-V")
+		// `nginx -V` prints its configure line to STDERR and exits 0, so this
+		// must read combined output — reading stdout alone returns "" and
+		// silently reports "no HTTP/3" even on a build that has it.
+		out, err := a.Runner.RunCombined(context.Background(), "nginx", "-V")
 		if err != nil {
 			a.http3 = false
 			return
@@ -217,6 +276,14 @@ func (a *Agent) CreateSite(p rpc.CreateSiteParams) (rpc.CreateSiteResult, error)
 		site.RootPath = filepath.Join(a.Paths.SitesRoot, site.Domain)
 	}
 	if err := a.validateSiteRoot(site); err != nil {
+		return rpc.CreateSiteResult{}, err
+	}
+	// Refuse a PHP version this machine does not have BEFORE creating a Unix
+	// user, a database and a directory tree. Asking for 8.4 on a host that ships
+	// 8.5 otherwise fails much later with "Unit php8.4-fpm.service not found",
+	// and the rollback then trips over the same missing unit and reports
+	// "rollback incomplete" — a confusing failure for what is a simple typo.
+	if err := a.validatePHPVersionInstalled(site.PHPVersion); err != nil {
 		return rpc.CreateSiteResult{}, err
 	}
 
@@ -486,11 +553,15 @@ func (a *Agent) installWooCommerce(ctx context.Context, site state.Site, dir str
 	if err := run("rewrite", "flush"); err != nil {
 		return fmt.Errorf("wp rewrite flush: %w", err)
 	}
-	// Clear APCu so PHP-FPM stops serving the stale (pre-Woo) rewrite_rules and
-	// options it cached during the WordPress-only phase. Per-site, so no other
-	// tenant on this PHP version is affected.
-	if err := a.refreshSiteState(ctx, site); err != nil {
-		a.Log.Warn("refresh after woocommerce install failed", "site", site.Domain, "err", err)
+	// A reload is enough here and a per-site flush would be wrong: this runs
+	// during initial provisioning, BEFORE renderSite has written the vhost, so
+	// a loopback request for this domain lands on the default server (the panel
+	// itself) rather than the site. There is also nothing to flush — a brand-new
+	// site has served no requests, so its FPM workers hold no cached state. The
+	// per-site flush is for later mutations (updates, restores, migrations),
+	// where the vhost exists and APCu genuinely holds stale rows.
+	if err := a.reloadPHPFPM(ctx, site.PHPVersion); err != nil {
+		a.Log.Warn("php-fpm reload after woocommerce install failed", "site", site.Domain, "err", err)
 	}
 	return nil
 }

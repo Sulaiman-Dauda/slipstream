@@ -21,6 +21,9 @@ func (fakeFailRunner) Run(context.Context, string, ...string) (string, error) {
 func (fakeFailRunner) RunStdin(context.Context, string, string, ...string) (string, error) {
 	return "", errors.New("unavailable")
 }
+func (fakeFailRunner) RunCombined(context.Context, string, ...string) (string, error) {
+	return "", errors.New("unavailable")
+}
 
 func TestResolveInSiteJail(t *testing.T) {
 	// resolveInSite resolves symlinks, so use a real on-disk root.
