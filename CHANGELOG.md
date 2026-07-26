@@ -5,6 +5,12 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-07-26
+
+First tagged release. Everything below was built and verified before this tag; the
+version number simply makes it installable with the one-line installer, which
+fetches binaries and their SHA-256 checksums from the release assets.
+
 Pre-1.0. Slipstream is a release candidate: it works end to end on both supported Ubuntu releases,
 but has not yet carried production traffic and has had no external security audit.
 
