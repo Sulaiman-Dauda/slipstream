@@ -1,8 +1,13 @@
+# Blank issues are off on purpose: a free-text box produces reports without a
+# version, an OS or a log, and every one of those costs a round trip.
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
     url: https://github.com/Sulaiman-Dauda/slipstream/security/advisories/new
     about: Report privately. Never open a public issue for a security problem.
+  - name: Question or idea
+    url: https://github.com/Sulaiman-Dauda/slipstream/discussions
+    about: Usage questions, ideas and "is this supposed to work like this?" — Discussions, not issues.
   - name: Documentation
-    url: https://github.com/Sulaiman-Dauda/slipstream/tree/main/docs
-    about: Install, configuration, troubleshooting and the security model.
+    url: https://slipstreampanel.com
+    about: Install, configuration, caching, backups, the security model and troubleshooting.

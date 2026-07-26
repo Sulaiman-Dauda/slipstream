@@ -74,6 +74,16 @@ spec have measured 2.5× apart, so confirm CPU parity before attributing a diffe
 
 ## Pull requests
 
+**Branch naming.** Fork, branch from `main`, and name it for what it does:
+`fix/cache-purge-race`, `feat/laravel-site-type`, `docs/backup-restore`,
+`refactor/nginx-render`, `ci/pin-actions`. Nothing depends on it — it just makes a
+list of open PRs readable at a glance.
+
+The bar a PR is held to is written down in
+[`.github/REVIEW_GUIDELINES.md`](./.github/REVIEW_GUIDELINES.md). It is worth two
+minutes before you start: it says exactly what will be checked, so nothing in
+review should be a surprise.
+
 1. Branch from `main`.
 2. Keep it focused. One concern per PR.
 3. `make test` and `make vet` must pass.
@@ -103,6 +113,26 @@ happened. Panel logs (`journalctl -u slipstream-api -u slipstream-agent`) and th
 log under `/var/log/slipstream/<domain>/` usually contain the answer.
 
 **Security issues go through the [security policy](./SECURITY.md), not the issue tracker.**
+
+## What to expect from us
+
+Slipstream is maintained by one person alongside other work. Being honest about
+that is better than leaving you guessing:
+
+- **Issues** — usually looked at within a few days. A bug with clear reproduction
+  steps against a throwaway server gets attention fastest, because it can be
+  acted on rather than negotiated.
+- **Pull requests** — a first response within about a week. Large or structural
+  changes take longer, which is exactly why it is worth opening an issue before
+  building one.
+- **Security reports** — prioritised over everything else. See
+  [SECURITY.md](./SECURITY.md); report privately, never in a public issue.
+
+If something has gone quiet for longer than that, a comment on the thread is
+welcome and not considered nagging.
+
+There is **no CLA and no DCO sign-off**. Requiring either adds a hurdle that
+costs more in lost contributions than it returns for a project this size.
 
 ## Licence
 

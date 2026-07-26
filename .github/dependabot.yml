@@ -1,13 +1,39 @@
+# Dependency updates, grouped so a week's worth arrives as a few reviewable PRs
+# rather than fifteen. Patch and minor are grouped together; majors are kept
+# separate because they are the ones that break builds and deserve their own
+# review — a grouped major update sat open on the sister project for days with
+# a React version mismatch that would have broken production.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message: { prefix: "build(deps)" }
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: npm
     directory: /ui
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message: { prefix: "build(deps)" }
+    groups:
+      ui-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Pinned to SHAs with a version comment; Dependabot understands that form and
+  # updates both the SHA and the comment.
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
+    labels: ["dependencies"]
+    commit-message: { prefix: "ci(deps)" }
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,19 @@
+# Every path falls to the maintainer today. This file exists so that when a
+# second maintainer appears, ownership is a one-line change rather than a
+# convention nobody wrote down.
+#
+# Branch protection does NOT currently require code-owner review: GitHub will
+# not let you approve your own pull request, so requiring it with a single
+# maintainer deadlocks every merge. Turn on "Require review from Code Owners"
+# the day someone else can approve.
+
+*                       @Sulaiman-Dauda
+
+# Areas where a mistake is expensive, listed explicitly so they are never
+# reviewed casually — the privilege boundary, the installer that runs as root,
+# and anything that publishes binaries.
+/internal/agent/        @Sulaiman-Dauda
+/internal/rpc/          @Sulaiman-Dauda
+/installer/             @Sulaiman-Dauda
+/.github/workflows/     @Sulaiman-Dauda
+/SECURITY.md            @Sulaiman-Dauda
