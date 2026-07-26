@@ -27,13 +27,13 @@ type Input struct {
 	// TLS certificate paths. When CertAvailable is false the engine renders
 	// the self-signed bootstrap certificate so the vhost is valid before
 	// ACME issuance completes.
-	CertAvailable  bool
-	CertFullchain  string
-	CertKey        string
-	FallbackCert   string
-	FallbackKey    string
-	ACMEWebroot    string
-	ClientMaxBody  string // e.g. "128m"
+	CertAvailable bool
+	CertFullchain string
+	CertKey       string
+	FallbackCert  string
+	FallbackKey   string
+	ACMEWebroot   string
+	ClientMaxBody string // e.g. "128m"
 
 	// HTTP3 advertises and serves QUIC on 443/udp. Capability-gated: Ubuntu
 	// 24.04 ships nginx 1.24, which has no ngx_http_v3_module, so this stays

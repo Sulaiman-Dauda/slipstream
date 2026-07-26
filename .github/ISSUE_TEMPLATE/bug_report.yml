@@ -1,0 +1,68 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** Use
+        [Security → Report a vulnerability](../../security/advisories/new) so it stays private.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what actually happened.
+      placeholder: |
+        I created a woocommerce site and /shop returned 404.
+        I expected the shop page to load.
+    validations: { required: true }
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Ideally against a throwaway server, so someone else can follow them.
+      placeholder: |
+        1. Fresh Ubuntu 24.04 server
+        2. Install with `SLIPSTREAM_LOCAL_BUILD=... bash installer/install.sh`
+        3. `slipctl sites create shop.example.com woocommerce '{...}'`
+        4. `curl -I https://shop.example.com/shop/`
+    validations: { required: true }
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `slipctl --version`
+      placeholder: ecdd48b
+    validations: { required: true }
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Ubuntu 24.04 LTS
+        - Ubuntu 26.04 LTS
+        - Other (unsupported)
+    validations: { required: true }
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `journalctl -u slipstream-api -u slipstream-agent -n 100` and, if a site is involved,
+        `/var/log/slipstream/<domain>/error.log`. Redact anything sensitive.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is not a security vulnerability (those go through the security policy)
+          required: true
+        - label: I checked the [troubleshooting guide](../../blob/main/docs/troubleshooting.md)
+          required: true

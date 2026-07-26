@@ -50,10 +50,10 @@ func TestPrecompressTree(t *testing.T) {
 
 func TestPathOf(t *testing.T) {
 	cases := map[string]string{
-		"https://example.com/a/b/":     "/a/b/",
-		"https://example.com":          "/",
-		"/already/a/path":              "/already/a/path",
-		"http://example.com/x?y=1":     "/x?y=1",
+		"https://example.com/a/b/": "/a/b/",
+		"https://example.com":      "/",
+		"/already/a/path":          "/already/a/path",
+		"http://example.com/x?y=1": "/x?y=1",
 	}
 	for in, want := range cases {
 		if got := pathOf(in, "example.com"); got != want {
