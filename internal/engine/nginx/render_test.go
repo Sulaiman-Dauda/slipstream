@@ -61,7 +61,7 @@ func TestWooCommerceVhost(t *testing.T) {
 	for _, want := range []string{
 		"fastcgi_cache slip_7;",
 		`fastcgi_cache_key "$scheme$request_method$host$request_uri$slip_enc";`,
-		"fastcgi_cache_lock on;",                  // request coalescing
+		"fastcgi_cache_lock on;",                 // request coalescing
 		"fastcgi_cache_use_stale updating error", // SWR + stale-if-error
 		"fastcgi_cache_background_update on;",
 		"add_header X-Slipstream-Cache $upstream_cache_status always;",
@@ -123,8 +123,8 @@ func TestStaticSiteHasNoPHPOrCache(t *testing.T) {
 	}
 	files, err := Renderer{}.SiteFiles(engine.Input{
 		Site: site, Policy: velocity.PolicyFor(site),
-		DocRoot: "/srv/sites/docs.example.com/current",
-		LogDir:  "/var/log/slipstream/docs.example.com",
+		DocRoot:      "/srv/sites/docs.example.com/current",
+		LogDir:       "/var/log/slipstream/docs.example.com",
 		FallbackCert: "/etc/slipstream/certs/fallback.pem", FallbackKey: "/etc/slipstream/certs/fallback.key",
 		ACMEWebroot: "/var/lib/slipstream/acme",
 	})
@@ -152,7 +152,7 @@ func TestProxySite(t *testing.T) {
 	}
 	files, err := Renderer{}.SiteFiles(engine.Input{
 		Site: site, Policy: velocity.PolicyFor(site),
-		LogDir:       "/var/log/slipstream/app.example.com",
+		LogDir:        "/var/log/slipstream/app.example.com",
 		CertAvailable: true, CertFullchain: "/c.pem", CertKey: "/k.pem",
 		ACMEWebroot: "/var/lib/slipstream/acme",
 	})
@@ -192,4 +192,58 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// nginx inherits add_header from the enclosing level only when the current
+// level declares none. The php and static locations each declare one of their
+// own, so a single server-level block is discarded exactly where every real
+// request is served. This shipped: live boxes returned no security headers at
+// all on any WordPress page.
+func secSite() state.Site {
+	return state.Site{
+		ID: 5, Domain: "sec.example.com", SystemUser: "slip-site-5",
+		PHPVersion: "8.4", Type: state.SiteWordPress,
+		RootPath: "/srv/sites/sec.example.com",
+		Config:   state.SiteConfig{CacheEnabled: true},
+	}
+}
+
+func TestSecurityHeadersPresentInEveryLocationThatSetsHeaders(t *testing.T) {
+	files, err := Renderer{SitesDir: t.TempDir(), ConfDir: t.TempDir()}.SiteFiles(engine.Input{
+		Site:      secSite(),
+		Policy:    velocity.PolicyFor(secSite()),
+		DocRoot:   "/srv/sites/sec.example.com/current",
+		PHPSocket: "/run/slipstream/php/slip-site-5.sock",
+		LogDir:    "/var/log/slipstream/sec.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vhost string
+	for p, c := range files {
+		if strings.HasSuffix(p, "sec.example.com.conf") {
+			vhost = c
+		}
+	}
+	if vhost == "" {
+		t.Fatal("vhost not rendered")
+	}
+	// One occurrence per level that declares add_header: server, static, php.
+	for _, h := range []string{
+		"add_header X-Content-Type-Options nosniff always;",
+		"add_header X-Frame-Options SAMEORIGIN always;",
+		"add_header Referrer-Policy strict-origin-when-cross-origin always;",
+	} {
+		if n := strings.Count(vhost, h); n < 3 {
+			t.Errorf("security header %q appears %d times, want >=3 (server + static + php locations)", h, n)
+		}
+	}
+	// And it must land inside the php location, after X-Slipstream-Cache.
+	i := strings.Index(vhost, "add_header X-Slipstream-Cache")
+	if i < 0 {
+		t.Fatal("expected the cache-status header in the php location")
+	}
+	if !strings.Contains(vhost[i:], "X-Content-Type-Options") {
+		t.Error("php location sets add_header but does not re-declare the security headers")
+	}
 }
