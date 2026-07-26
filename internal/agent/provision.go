@@ -2,8 +2,12 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +21,7 @@ import (
 	"github.com/slipstream-panel/slipstream/internal/state"
 	"github.com/slipstream-panel/slipstream/internal/sysprobe"
 	"github.com/slipstream-panel/slipstream/internal/velocity"
+	"github.com/slipstream-panel/slipstream/internal/version"
 )
 
 var systemUserRe = regexp.MustCompile(`^slip-site-[0-9]+$`)
@@ -62,7 +67,26 @@ func (a *Agent) input(site state.Site) engine.Input {
 	if _, err := os.Stat(fullchain); err == nil {
 		in.CertAvailable = true
 	}
+	in.HTTP3 = a.nginxHasHTTP3()
 	return in
+}
+
+// nginxHasHTTP3 reports whether the installed nginx was built with
+// ngx_http_v3_module. Ubuntu 24.04 ships nginx 1.24 (no HTTP/3), 26.04 and
+// newer ship a build that has it — so sites gain QUIC when the OS provides it,
+// without Slipstream vendoring its own nginx. The probe result is cached: it
+// cannot change without replacing the binary, which restarts the agent anyway.
+func (a *Agent) nginxHasHTTP3() bool {
+	a.http3Once.Do(func() {
+		// `nginx -V` prints the configure line to stderr.
+		out, err := a.Runner.Run(context.Background(), "nginx", "-V")
+		if err != nil {
+			a.http3 = false
+			return
+		}
+		a.http3 = strings.Contains(out, "http_v3_module")
+	})
+	return a.http3
 }
 
 // renderSite writes all managed config for a site and reloads services.
@@ -131,6 +155,21 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 		if a.Paths.PHPPoolRoot != "/etc/php" {
 			poolPath = filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", site.SystemUser+".conf")
 		}
+		// Managed [global] FPM fragment (master self-heal, FD limits). Written
+		// alongside the pool so it exists before the pool is loaded, and
+		// re-asserted on every render so drift is corrected.
+		gPath, gContent := phpfpm.RenderGlobal(site.PHPVersion)
+		if a.Paths.PHPPoolRoot != "/etc/php" {
+			gPath = filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", phpfpm.GlobalConfName)
+		}
+		gOld, gErr := os.ReadFile(gPath)
+		priors[gPath] = prior{content: gOld, existed: gErr == nil}
+		gmf, err := writeManaged(gPath, gContent, 0o644)
+		if err != nil {
+			rollback()
+			return nil, err
+		}
+		managed = append(managed, gmf)
 		old, readErr := os.ReadFile(poolPath)
 		priors[poolPath] = prior{content: old, existed: readErr == nil}
 		mf, err := writeManaged(poolPath, poolContent, 0o644)
@@ -448,22 +487,103 @@ func (a *Agent) installWooCommerce(ctx context.Context, site state.Site, dir str
 		return fmt.Errorf("wp rewrite flush: %w", err)
 	}
 	// Clear APCu so PHP-FPM stops serving the stale (pre-Woo) rewrite_rules and
-	// options it cached during the WordPress-only phase. FPM's segment is not
-	// reachable from this wp-cli process, so restart the pool. A reload
-	// (SIGUSR2) keeps the master alive and does NOT drop APCu shared memory.
-	if err := a.restartPHPFPM(ctx, site.PHPVersion); err != nil {
-		a.Log.Warn("php-fpm restart after woocommerce install failed", "site", site.Domain, "err", err)
+	// options it cached during the WordPress-only phase. Per-site, so no other
+	// tenant on this PHP version is affected.
+	if err := a.refreshSiteState(ctx, site); err != nil {
+		a.Log.Warn("refresh after woocommerce install failed", "site", site.Domain, "err", err)
 	}
 	return nil
 }
 
 // restartPHPFPM fully restarts the FPM service, dropping APCu shared memory
-// (which a reload preserves). Use after out-of-band wp-cli mutations that must
-// become visible to the live site; prefer reloadPHPFPM for code-only changes
-// where the object cache should survive.
+// (which a reload preserves). This is the blunt instrument: the service is
+// shared by every site on this PHP version, so it briefly interrupts other
+// tenants. Prefer refreshSiteState, which achieves the same thing for one site.
 func (a *Agent) restartPHPFPM(ctx context.Context, phpVersion string) error {
 	_, err := a.Runner.Run(ctx, "systemctl", "restart", "php"+phpVersion+"-fpm")
 	return err
+}
+
+// refreshSiteState makes an out-of-band change to a site's database or files
+// visible to the live site, touching only that site.
+//
+// Two caches hide such a change. OPcache holds compiled bytecode for the old
+// files; an FPM reload clears it. APCu holds the site's WordPress object cache
+// — options, rewrite rules — and a reload does NOT clear it, because SIGUSR2
+// leaves the master (and its shared memory) alive. Restarting the service does
+// clear it but interrupts every other tenant.
+//
+// So: ask the site itself to flush, by calling the connector through its own
+// FPM pool over the loopback interface. That clears exactly this site's object
+// cache. Then reload FPM for OPcache. Only if the flush cannot be delivered do
+// we fall back to the service-wide restart, so correctness never depends on the
+// connector being reachable.
+func (a *Agent) refreshSiteState(ctx context.Context, site state.Site) error {
+	if site.PHPVersion == "" {
+		return nil
+	}
+	if site.Type == state.SiteWordPress || site.Type == state.SiteWooCommerce {
+		if err := a.flushObjectCache(ctx, site); err == nil {
+			// Object cache cleared for this site; reload handles OPcache.
+			return a.reloadPHPFPM(ctx, site.PHPVersion)
+		} else {
+			a.Log.Warn("per-site object-cache flush failed; falling back to an FPM restart",
+				"site", site.Domain, "err", err)
+		}
+	}
+	return a.restartPHPFPM(ctx, site.PHPVersion)
+}
+
+// flushObjectCache asks the site's connector to run wp_cache_flush() inside one
+// of its own FPM workers. The request goes to the loopback address with the
+// site's Host header so nginx routes it to the right vhost and pool; the query
+// string forces a page-cache bypass so PHP actually executes; the site token
+// authenticates it and is sent as a header so it stays out of access logs.
+func (a *Agent) flushObjectCache(ctx context.Context, site state.Site) error {
+	token, err := a.wp(ctx, site, "config", "get", "SLIPSTREAM_SITE_TOKEN")
+	if err != nil {
+		return fmt.Errorf("read site token: %w", err)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return fmt.Errorf("site has no connector token")
+	}
+
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			// Always connect to this machine, whatever the domain resolves to
+			// publicly — the site may not be in DNS yet, or may point elsewhere.
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, "127.0.0.1:443")
+			},
+			// The vhost may still be on the self-signed bootstrap certificate.
+			// This is a loopback call to our own machine, so certificate
+			// identity adds nothing: the site token is what authenticates it.
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://"+site.Domain+"/?slipstream_flush=1", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Slipstream-Flush", token)
+	req.Header.Set("User-Agent", "slipstream-agent/"+version.Version)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("connector flush returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !strings.Contains(string(body), `"flushed":true`) {
+		return fmt.Errorf("connector did not flush: %s", strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 // DeleteSite tears down a site completely.
