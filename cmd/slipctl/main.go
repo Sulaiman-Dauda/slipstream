@@ -4,9 +4,10 @@
 //
 // Environment:
 //
-//	SLIPSTREAM_URL      panel address (default https://127.0.0.1:8443)
+//	SLIPSTREAM_URL      panel address (default https://127.0.0.1:5252)
 //	SLIPSTREAM_EMAIL    admin email
 //	SLIPSTREAM_PASSWORD admin password
+//	SLIPSTREAM_INSECURE set to 1 to skip TLS verification for a non-loopback URL
 package main
 
 import (

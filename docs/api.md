@@ -88,6 +88,12 @@ the API does not confirm that a site exists.
 | `POST` | `/api/sites/{id}/purge` | manage | purge the page cache |
 | `POST` | `/api/sites/{id}/warm` | manage | crawl the sitemap to warm the cache |
 | `GET` | `/api/sites/{id}/cache-stats` | auth | object-cache hit rate and memory |
+| `POST` | `/api/sites/{id}/migration` | manage | import an existing site from an archive + SQL dump |
+
+`POST /api/sites/{id}/migration` takes `{"archive": "...", "sql": "...", "old_domain": "...",
+"confirm": "<destination domain>"}`. `archive` and `sql` are paths **inside the destination site's
+directory** — upload them over SFTP first. `old_domain` drives the search-and-replace through the
+imported database, and `confirm` must equal the destination domain or the request is rejected.
 
 Creating a site:
 
@@ -195,6 +201,10 @@ that site's database only, so cross-database access fails at the server.
 | `PUT` | `/api/settings` | admin | update them |
 | `POST` | `/api/panel/certificate` | admin | install a certificate for the panel itself |
 | `POST` | `/api/panel/update` | admin | self-update, health-checked with automatic rollback |
+
+`POST /api/panel/update` takes `{"base_url": "https://…", "version": "v0.1.0"}`. `base_url` is the
+release root holding the binaries and their `.sha256` files; it must be `https://` and is required
+in practice. See [Operations](./operations.md#upgrades).
 
 ## Tasks and events
 

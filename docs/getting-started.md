@@ -21,18 +21,17 @@ You need:
 
 A £4–6/month VPS is a perfectly good place to start.
 
-## 1. Build
+## 1. Install
 
-Binary releases are not published yet, so build from source on your workstation. You need
-**Go 1.25+** and **Node 20+**:
+SSH to the server as root and run one command:
 
 ```bash
-git clone https://github.com/Sulaiman-Dauda/slipstream.git
-cd slipstream
-make dist
+curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh | sudo bash
 ```
 
-That builds the web UI and three `linux/amd64` binaries into `dist/`:
+That is the whole install — there is nothing to build and nothing to copy up. It downloads the
+three binaries and verifies each against its published SHA-256 before installing it, so a corrupted
+or tampered download aborts rather than installs.
 
 | Binary | Runs as | Purpose |
 | --- | --- | --- |
@@ -40,15 +39,12 @@ That builds the web UI and three `linux/amd64` binaries into `dist/`:
 | `panel-agent` | `root` | all privileged system work |
 | `slipctl` | you | command-line client |
 
-## 2. Install
-
-Copy the build and the installer to the server, then run it:
+To pin a specific version rather than tracking the newest release, set `SLIPSTREAM_VERSION` to a
+tag:
 
 ```bash
-scp -r dist installer scripts root@your-server:/root/slipstream/
-ssh root@your-server
-cd /root/slipstream
-SLIPSTREAM_LOCAL_BUILD=/root/slipstream/dist bash installer/install.sh
+curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh \
+  | sudo SLIPSTREAM_VERSION=v0.1.0 bash
 ```
 
 The installer takes about 80 seconds. It:
@@ -72,7 +68,27 @@ It ends with something like:
   The setup link is valid for 24 hours.
 ```
 
-## 3. Create your administrator account
+<details>
+<summary>Installing an unreleased build instead</summary>
+
+To run a change that has not been released — your own work, or `main` ahead of the last tag —
+build on your workstation and point the installer at the result. You need **Go 1.25+** and
+**Node 20+**:
+
+```bash
+git clone https://github.com/Sulaiman-Dauda/slipstream.git
+cd slipstream
+make dist                       # builds the UI and linux/amd64 binaries into dist/
+scp -r dist installer scripts root@your-server:/root/slipstream/
+ssh root@your-server 'cd /root/slipstream && SLIPSTREAM_LOCAL_BUILD=/root/slipstream/dist bash installer/install.sh'
+```
+
+`SLIPSTREAM_LOCAL_BUILD` installs those binaries directly and skips the download and checksum
+step, which is exactly why it is not the default path.
+
+</details>
+
+## 2. Create your administrator account
 
 Open that URL. Your browser will warn about the certificate — the panel starts on a self-signed
 one, which is expected on first boot. Continue through the warning.
@@ -86,7 +102,7 @@ Two things worth doing straight away:
 - **Give the panel a real certificate** once you have a hostname pointing at the server, so you
   stop clicking through warnings. See [Operations](./operations.md#panel-certificate).
 
-## 4. Add your first site
+## 3. Add your first site
 
 Point a domain's DNS `A` record at the server first — certificate issuance needs it to resolve.
 For a quick test without DNS you can use a [sslip.io](https://sslip.io) name, which resolves any
@@ -123,7 +139,7 @@ slipctl sites list
 curl -I https://shop.example.com/
 ```
 
-## 5. Get a real certificate
+## 4. Get a real certificate
 
 Once DNS resolves to the server:
 
@@ -134,7 +150,7 @@ slipctl cert issue <site-id>
 That runs a Let's Encrypt HTTP-01 challenge and installs the certificate. Renewal is automatic via
 certbot's timer, and nginx is reloaded on renewal so the new certificate is actually served.
 
-## 6. Confirm caching is working
+## 5. Confirm caching is working
 
 ```bash
 curl -sI https://shop.example.com/ | grep -i x-slipstream-cache
@@ -144,7 +160,7 @@ The first request is a `MISS`, subsequent ones are `HIT`. Pages that must never 
 checkout, my-account, anything with a login cookie — return `BYPASS`. See
 [Caching](./caching.md).
 
-## 7. Make your first safe deployment
+## 6. Make your first safe deployment
 
 This is the part worth learning early, because it is what stops a bad change reaching visitors.
 
@@ -173,7 +189,7 @@ slipctl rollback <site-id>
 
 Releases are immutable and `current` is a symlink, so rollback is atomic and instant.
 
-## 8. Set up backups
+## 7. Set up backups
 
 A backup you have never restored is a guess. Slipstream leans on that.
 

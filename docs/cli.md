@@ -135,11 +135,19 @@ slipctl settings get
 slipctl settings set <key> <value>
 ```
 
-| Key | Purpose |
-| --- | --- |
-| `backup_repository` | Restic repository URL |
-| `backup_password` | Restic repository passphrase — **keep a copy off this server** |
-| `acme_email` | address Let's Encrypt uses for expiry notices |
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `backup_repository` | — | Restic repository URL |
+| `backup_password` | — | Restic repository passphrase — **keep a copy off this server** |
+| `acme_email` | — | address Let's Encrypt uses for expiry notices |
+| `probe_target` | `https://127.0.0.1` | where Performance Guard sends its measurement requests during a Safe Push |
+
+These four are the only settings the API will write; `slipctl settings get` masks
+`backup_password` to a presence indicator rather than returning it.
+
+`probe_target` exists because Safe Push measures the site over HTTP with the site's `Host` header.
+The default hits the loopback interface so measurement never leaves the machine — change it only if
+the panel must probe through something else.
 
 Changing `backup_repository` or `backup_password` re-points where backups go; existing snapshots stay
 in the old repository, so keep its password if you might need them.

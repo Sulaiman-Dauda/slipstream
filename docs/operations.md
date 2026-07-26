@@ -36,8 +36,16 @@ Deleting a site removes its log directory too.
 ## Upgrades
 
 ```bash
-POST /api/panel/update
+curl -sk -c jar -b jar https://your-panel/api/panel/update \
+  -H 'Content-Type: application/json' \
+  -d '{"base_url":"https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download"}'
 ```
+
+`base_url` is the directory the binaries and their `.sha256` files are published under — the same
+release root the installer uses. It **must** be `https://`, and it is required: there is a
+`update_url` setting the agent falls back to, but it is not writable through the settings API, so in
+practice you pass `base_url` on each call. Add `"version"` to record which build you are moving to
+in the audit log.
 
 The self-update downloads the new binaries, verifies their checksums, confirms they are valid ELF
 executables, stages all of them before swapping any, backs up the current ones, then hands over to a
