@@ -26,7 +26,7 @@ A £4–6/month VPS is a perfectly good place to start.
 SSH to the server as root and run one command:
 
 ```bash
-curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://get.slipstreampanel.com | sudo bash
 ```
 
 That is the whole install — there is nothing to build and nothing to copy up. It downloads the

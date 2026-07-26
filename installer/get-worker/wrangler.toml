@@ -1,0 +1,7 @@
+name = "slipstream-get"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+
+routes = [
+  { pattern = "get.slipstreampanel.com/*", zone_name = "slipstreampanel.com" }
+]

@@ -92,7 +92,7 @@ It configures nginx, PHP-FPM, MariaDB and systemd on the machine, so give it a s
 On a fresh Ubuntu 24.04 or 26.04 server, as root:
 
 ```bash
-curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://get.slipstreampanel.com | sudo bash
 ```
 
 That is the whole install. It checks the machine, installs nginx, PHP-FPM, MariaDB, restic,

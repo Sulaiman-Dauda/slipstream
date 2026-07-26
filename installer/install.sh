@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Slipstream installer — Ubuntu 24.04 LTS (amd64).
 #
-#   curl -fsSL https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download/install.sh | sudo bash
+#   curl -fsSL https://get.slipstreampanel.com | sudo bash
 #
 # This script is the bootstrap: it verifies the machine, installs the data
 # plane (nginx, php-fpm, mariadb, restic, certbot, wp-cli), installs the
@@ -25,10 +25,108 @@ else
   RELEASE_URL="${SLIPSTREAM_RELEASE_URL:-https://github.com/${SLIPSTREAM_REPO}/releases/download/${SLIPSTREAM_VERSION}}"
 fi
 
-log()  { echo -e "\033[1;36m[slipstream]\033[0m $*"; }
-fail() { echo -e "\033[1;31m[slipstream] ERROR:\033[0m $*" >&2; exit 1; }
+# ---------- progress UI ----------
+# An install takes 80-odd seconds, most of it inside a single silent apt call.
+# Without feedback that reads as "hung", so every step gets a spinner and a
+# measured duration.
+#
+# The mechanics: fd 3 and 4 keep the real terminal, then stdout/stderr for the
+# whole script are redirected into a log file. Every package manager, systemctl
+# and nginx message therefore lands in the log instead of tearing through the
+# spinner line, and the log is kept for diagnosing a failure. Only this UI
+# writes to the terminal.
+INSTALL_LOG=/var/log/slipstream-install.log
+exec 3>&1 4>&2
+: >"$INSTALL_LOG" 2>/dev/null || INSTALL_LOG=/tmp/slipstream-install.log
+exec 1>>"$INSTALL_LOG" 2>&1
+
+if [[ -t 3 ]]; then
+  R=$'\033[0m'; B=$'\033[1m'; D=$'\033[2m'
+  CY1=$'\033[38;5;45m'; CY2=$'\033[38;5;38m'; CY3=$'\033[38;5;31m'
+  GRN=$'\033[38;5;42m'; RED=$'\033[38;5;203m'
+  TTY=1
+else
+  R=''; B=''; D=''; CY1=''; CY2=''; CY3=''; GRN=''; RED=''
+  TTY=0
+fi
+
+ui() { printf "$@" >&3; }
+
+STEP=0
+STEP_TOTAL=10
+STEP_LABEL=''
+STEP_T0=0
+_spin_pid=''
+
+# Braille frames as an array — indexing a UTF-8 string by byte would slice the
+# multi-byte characters in half.
+_FRAMES=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+
+spinner_stop() {
+  if [[ -n "$_spin_pid" ]]; then
+    kill "$_spin_pid" 2>/dev/null || true
+    wait "$_spin_pid" 2>/dev/null || true
+    _spin_pid=''
+    ui '\r\033[2K'
+  fi
+}
+
+step() {
+  STEP=$((STEP + 1)); STEP_LABEL="$1"; STEP_T0=$SECONDS
+  if [[ $TTY -eq 1 ]]; then
+    (
+      i=0
+      while :; do
+        i=$(((i + 1) % ${#_FRAMES[@]}))
+        printf '\r  %s%s%s  %s%2d/%d%s  %s' \
+          "$CY1" "${_FRAMES[$i]}" "$R" "$D" "$STEP" "$STEP_TOTAL" "$R" "$STEP_LABEL" >&3
+        sleep 0.08
+      done
+    ) &
+    _spin_pid=$!
+  else
+    ui '  [%d/%d] %s\n' "$STEP" "$STEP_TOTAL" "$STEP_LABEL"
+  fi
+}
+
+step_done() {
+  local secs=$((SECONDS - STEP_T0))
+  spinner_stop
+  ui '  %s✓%s  %s%2d/%d%s  %-42s %s%ss%s\n' \
+    "$GRN" "$R" "$D" "$STEP" "$STEP_TOTAL" "$R" "$STEP_LABEL" "$D" "$secs" "$R"
+}
+
+banner() {
+  [[ $TTY -eq 1 ]] || { ui 'Slipstream installer\n\n'; return; }
+  ui '\n'
+  ui '   %s━━━━━━━━━━━%s\n' "$CY1" "$R"
+  ui '     %s━━━━━━━━━%s   %sslip%s%sstream%s\n' "$CY2" "$R" "$B" "$R" "$D" "$R"
+  ui '       %s━━━━━━━%s   %sself-hosted hosting control panel%s\n' "$CY3" "$R" "$D" "$R"
+  ui '\n'
+}
+
+# Clear the spinner's line before writing, or the note lands mid-frame and the
+# spinner then redraws over half of it. The spinner reclaims the next line on
+# its following tick.
+log()  { ui '\r\033[2K  %s·%s  %s\n' "$D" "$R" "$*"; }
+fail() {
+  spinner_stop
+  printf '\n  %s✗  %s%s\n' "$RED" "$*" "$R" >&4
+  printf '     %sfull log: %s%s\n\n' "$D" "$INSTALL_LOG" "$R" >&4
+  # Surface the tail of the log so the cause is visible without a second SSH.
+  if [[ -s "$INSTALL_LOG" ]]; then
+    printf '%s' "$D" >&4; tail -n 12 "$INSTALL_LOG" | sed 's/^/     /' >&4; printf '%s\n' "$R" >&4
+  fi
+  exit 1
+}
+
+# A spinner left running after an interrupt would keep drawing over the prompt.
+trap 'spinner_stop' EXIT INT TERM
+
+banner
 
 # ---------- preflight ----------
+step "Checking the machine"
 [[ $EUID -eq 0 ]] || fail "run as root: curl -fsSL … | sudo bash"
 
 source /etc/os-release || fail "cannot detect OS"
@@ -55,9 +153,11 @@ command -v cpanel >/dev/null 2>&1 && fail "another control panel is installed on
 
 log "Preflight passed: ${PRETTY_NAME}, PHP ${PHP_VERSION}, ${MEM_MB} MB RAM, ports free."
 
+step_done
+
 # ---------- packages ----------
+step "Installing nginx, PHP, MariaDB, restic"
 export DEBIAN_FRONTEND=noninteractive
-log "Installing packages (nginx, PHP ${PHP_VERSION}, MariaDB, restic, certbot)…"
 apt-get update -qq
 apt-get install -y -qq software-properties-common curl gnupg ca-certificates >/dev/null
 if [[ "$NEED_PHP_PPA" == "1" ]]; then
@@ -82,8 +182,10 @@ if ! command -v wp >/dev/null; then
   chmod +x "$BIN_DIR/wp"
 fi
 
+step_done
+
 # ---------- users, directories, secrets ----------
-log "Creating users, directories and secrets…"
+step "Creating users, directories and secrets"
 id -u slipstream >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin slipstream
 
 install -d -m 0755 /srv/sites /var/log/slipstream /var/cache/slipstream
@@ -126,7 +228,10 @@ if [[ ! -f /etc/slipstream/certs/fallback.pem ]]; then
   chgrp www-data /etc/slipstream/certs/fallback.key 2>/dev/null || true
 fi
 
+step_done
+
 # ---------- binaries ----------
+step "Installing Slipstream binaries"
 if [[ -n "${SLIPSTREAM_LOCAL_BUILD:-}" ]]; then
   log "Installing binaries from local build ${SLIPSTREAM_LOCAL_BUILD}…"
   install -m 0755 "${SLIPSTREAM_LOCAL_BUILD}/panel-api" "${SLIPSTREAM_LOCAL_BUILD}/panel-agent" "${SLIPSTREAM_LOCAL_BUILD}/slipctl" "$BIN_DIR/"
@@ -140,11 +245,13 @@ else
   done
 fi
 
+step_done
+
 # ---------- kernel + nginx worker tuning ----------
+step "Tuning kernel and nginx workers"
 # These live outside the panel's managed config because they are main/events
 # level (worker_connections cannot be set from an http-level include) or kernel
 # level. Everything http-level is rendered by the agent into conf.d instead.
-log "Tuning kernel and nginx workers…"
 
 # Kernel: the defaults are sized for a desktop, not a server absorbing a spike.
 # Without these the accept queue overflows during a burst and the kernel drops
@@ -210,8 +317,10 @@ fi
 # Any leftover file from an earlier install is removed.
 rm -f /etc/nginx/conf.d/slipstream-ktls.conf
 
+step_done
+
 # ---------- base nginx configuration ----------
-log "Configuring nginx base…"
+step "Configuring nginx"
 rm -f /etc/nginx/sites-enabled/default
 # Nginx is the panel's only public ingress. This catch-all bootstrap vhost
 # makes first-run setup available on standard HTTPS while panel-api remains
@@ -247,12 +356,17 @@ NGINX
 # The panel owns everything under conf.d/slipstream-* and sites-enabled/.
 nginx -t >/dev/null
 
+step_done
+
 # ---------- database tuning ----------
+step "Tuning MariaDB"
 # The agent re-tunes on demand; give MariaDB a sane starting point now.
 systemctl enable --now mariadb >/dev/null
 
+step_done
+
 # ---------- services ----------
-log "Installing systemd services…"
+step "Starting services"
 for unit in slipstream-agent.service slipstream-api.service slipstream-api.socket; do
   if [[ -n "${SLIPSTREAM_LOCAL_BUILD:-}" ]]; then
     install -m 0644 "${SLIPSTREAM_LOCAL_BUILD}/../installer/systemd/${unit}" /etc/systemd/system/
@@ -274,7 +388,10 @@ for _ in $(seq 1 10); do
 done
 ss -ltn 'sport = :443' | grep -q LISTEN || fail "nginx is not listening on 443 — the panel would be unreachable"
 
+step_done
+
 # ---------- firewall ----------
+step "Opening the firewall"
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   log "Opening firewall ports 22, 80 and 443…"
   ufw allow 22/tcp >/dev/null
@@ -302,12 +419,14 @@ SSHD
 sshd -t
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
+step_done
+
 # ---------- log rotation ----------
+step "Log rotation and certificate renewal"
 # Without this the panel is the only thing on the box writing unbounded logs:
 # every other service here ships a logrotate config. A busy site produces
 # hundreds of MB of access log a week, and a full disk takes every site down —
 # so this is a availability control, not housekeeping.
-log "Installing log rotation…"
 cat > /etc/logrotate.d/slipstream <<'ROTATE'
 # Managed by Slipstream.
 # Per-site nginx access/error logs.
@@ -356,17 +475,26 @@ systemctl reload nginx 2>/dev/null || true
 HOOK
 chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/slipstream-reload-nginx.sh
 
+step_done
+
 # ---------- done ----------
 IP=$(curl -fsS -4 --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
 sleep 2
 SETUP_URL=$(journalctl -u slipstream-api --since "1 min ago" -o cat | grep -o '"url":"[^"]*"' | tail -1 | cut -d'"' -f4 || true)
 SETUP_URL=${SETUP_URL/<server-ip>/$IP}
 
-echo
-log "Installation complete."
-echo
-echo "  Open:  ${SETUP_URL:-https://$IP}"
-echo
-echo "  The setup link is valid for 24 hours."
-echo "  (Your browser will warn about the self-signed certificate — expected on first boot.)"
-echo
+ui '\n'
+ui '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$D" "$R"
+ui '\n'
+ui '  %s✓%s  %sSlipstream is running%s   %sin %sm %ss%s\n' \
+   "$GRN" "$R" "$B" "$R" "$D" "$((SECONDS / 60))" "$((SECONDS % 60))" "$R"
+ui '\n'
+ui '     Open   %s%s%s\n' "$CY1" "${SETUP_URL:-https://$IP}" "$R"
+ui '\n'
+ui '     %sThe link is valid for 24 hours and works once.%s\n' "$D" "$R"
+ui '     %sYour browser will warn about the certificate — it is self-signed%s\n' "$D" "$R"
+ui '     %suntil you issue a real one. That is expected on first boot.%s\n' "$D" "$R"
+ui '\n'
+ui '     %sdocs %shttps://slipstreampanel.com%s   %slog %s%s%s\n' \
+   "$D" "$R$CY3" "$R" "$D" "$R$D" "$INSTALL_LOG" "$R"
+ui '\n'
