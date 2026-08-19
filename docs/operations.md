@@ -105,9 +105,18 @@ not running, and any drift you did not cause.
 
 ## Capacity
 
-The defaults are sized from the memory actually available and are deliberately conservative. On a
-2 GB server expect roughly six PHP workers per site — enough to saturate two cores on uncacheable
-work, because at that point the bottleneck is CPU rather than worker count.
+The defaults are sized from the memory actually available and are deliberately conservative. Each
+site is budgeted a quarter of system RAM, and one PHP worker per 80 MB of that budget. On a 2 GB
+server that is roughly six workers per site, enough to saturate two cores on uncacheable work,
+because at that point the bottleneck is CPU rather than worker count. On a 1 GB server it is three.
+
+OPcache is the same 128 MB allocation on both, since the per-site budget only reaches the larger
+tier above 1 GB. Moving from 1 GB to 2 GB buys worker concurrency and InnoDB buffer pool, not a
+bigger opcode cache.
+
+Measured on a fresh 1 GB server (955 MB usable): the install takes 1m 47s and idles at 457 MB, or
+384 MB with `fwupd`, `packagekit`, `udisks2` and `multipathd` disabled, none of which a server
+needs. MariaDB claims a further ~238 MB when the first site's database is created.
 
 **Do not raise `php_workers` without measuring.** More workers on a CPU-bound path makes throughput
 *worse*, and enough of them will push the box into swap, which is how panels that ship

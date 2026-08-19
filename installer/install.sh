@@ -138,7 +138,10 @@ esac
 [[ "$(uname -m)" == "x86_64" ]] || fail "Slipstream supports amd64 only for now"
 
 MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
-[[ $MEM_MB -ge 1500 ]] || fail "at least 2 GB of RAM required (found ${MEM_MB} MB)"
+# A "1 GB" cloud instance reports ~950-990 MB of MemTotal, because firmware and
+# the kernel image never reach the free pool. Gate on 900 so a genuine 1 GB box
+# passes and a 512 MB one does not.
+[[ $MEM_MB -ge 900 ]] || fail "at least 1 GB of RAM required (found ${MEM_MB} MB)"
 
 DISK_MB=$(df -m / | awk 'NR==2 {print $4}')
 [[ $DISK_MB -ge 10000 ]] || fail "at least 10 GB free disk required"
