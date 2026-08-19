@@ -64,6 +64,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the installer and scripts
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # The runner image ships ShellCheck. Installing it from apt on every
+          # run made this job hostage to the Ubuntu mirrors: one run sat in
+          # apt-get for over two hours and had to be cancelled. Fall back to
+          # apt only if a future image drops it.
+          if ! command -v shellcheck >/dev/null; then
+            echo "shellcheck not preinstalled, falling back to apt"
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          fi
+          shellcheck --version | sed -n '2p'
           # SC2086 (word splitting) is intentional in places; warnings only.
           shellcheck --severity=error installer/install.sh scripts/*.sh
