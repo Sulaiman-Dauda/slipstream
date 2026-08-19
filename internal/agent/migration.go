@@ -102,12 +102,13 @@ func (a *Agent) ImportMigration(p rpc.MigrationParams) (rpc.MigrationResult, err
 	if err != nil {
 		return rpc.MigrationResult{}, err
 	}
-	var safetyDB string
+	var safetyDB, sqlPath string
 	if p.SQL != "" {
 		if !p.Site.Config.Database.Enabled || p.Site.Config.Database.External {
 			return rpc.MigrationResult{}, fmt.Errorf("site has no local managed database")
 		}
-		sqlPath, err := resolveInSite(p.Site.RootPath, p.SQL)
+		var err error
+		sqlPath, err = resolveInSite(p.Site.RootPath, p.SQL)
 		if err != nil || !strings.HasSuffix(strings.ToLower(p.SQL), ".sql") {
 			return rpc.MigrationResult{}, fmt.Errorf("invalid SQL import path")
 		}
@@ -170,6 +171,18 @@ func (a *Agent) ImportMigration(p rpc.MigrationParams) (rpc.MigrationResult, err
 		_ = a.refreshSiteState(ctx, p.Site)
 	}
 	cleanupRelease = false
+
+	// The import succeeded, so the inputs have served their purpose. Leaving
+	// them costs real disk on the small servers this targets (a 25 GB box
+	// loses several percent per site), and one of the two is a full database
+	// dump sitting inside the site tree. Removal is deliberately last: until
+	// this point a failure rolls back and the operator can retry without
+	// re-uploading anything.
+	_ = os.Remove(archivePath)
+	if sqlPath != "" {
+		_ = os.Remove(sqlPath)
+	}
+
 	return rpc.MigrationResult{ReleaseID: p.ReleaseID, Files: files, Bytes: size, Skipped: skipped}, nil
 }
 

@@ -66,6 +66,17 @@ serves() {
   echo "$code $fatal"
 }
 
+# wait_task <id> <timeout_s> -> echoes final status
+wait_task() {
+  local id=$1 t=${2:-180} st
+  for ((i=0;i<t;i+=4)); do
+    st=$(c "$PANEL/api/tasks/$id" | jqget "['status']")
+    case "$st" in succeeded|failed) echo "$st"; return;; esac
+    sleep 4
+  done
+  echo timeout
+}
+
 delete_site() { c -o /dev/null -w '%{http_code}' -X DELETE "$PANEL/api/sites/$1"; }
 
 # teardown_gone <id> -> yes|no  (delete is async: poll until GET 404s)
@@ -179,6 +190,65 @@ if [ "$st" = active ]; then
   sleep 20
   check "feature-site delete accepted" "$(delete_site "$FID")" "202"
   check "feature-site teardown completes" "$(teardown_gone "$FID")" "yes"
+fi
+
+# ---- Migration import ----------------------------------------------------
+# Nothing here was covered until a real migration destroyed the cache
+# connector on every imported site and nobody noticed: the site served fine,
+# nginx still cached, and no purge ever fired again. Migration is also how
+# most real sites arrive, so it is the least acceptable gap in this suite.
+#
+# The fixture is a WordPress tree with its mu-plugins REMOVED, which is what a
+# tree from any other host looks like. If the importer forgets to reinstate
+# the connector, the check below fails.
+echo "--- migration import ---"
+MS="mig.$DASH.sslip.io"
+MID=$(create_site "{\"domain\":\"$MS\",\"type\":\"wordpress\",\"php_version\":\"$PHPV\",\"admin_email\":\"$EMAIL\",\"admin_user\":\"admin\",\"admin_password\":\"WpBench!2026Pass\"}")
+st=$(wait_active "$MID" 120); check "migration-site provisions" "$st" "active"
+if [ "$st" = active ]; then
+  MU=$(site_get "$MID" | jqget "['system_user']")
+  MROOT="/srv/sites/$MS"
+  FIX=$(mktemp -d)
+
+  # Build a foreign-looking tree: real WordPress, no connector, plus a marker
+  # file so we can prove the archive's contents actually landed.
+  cp -a "$MROOT/current/." "$FIX/" 2>/dev/null
+  rm -rf "$FIX/wp-content/mu-plugins"
+  echo "imported-by-e2e" > "$FIX/imported-marker.txt"
+  tar czf "$MROOT/migration.tar.gz" -C "$FIX" .
+  sudo -u "$MU" wp --path="$MROOT/current" db export "$MROOT/migration.sql" --quiet 2>/dev/null
+  rm -rf "$FIX"
+
+  mtask=$(c "$PANEL/api/sites/$MID/migration" -H 'Content-Type: application/json' \
+    -d "{\"archive\":\"migration.tar.gz\",\"sql\":\"migration.sql\",\"old_domain\":\"$MS\",\"confirm\":\"$MS\"}" | jqget "['task']['id']")
+  check "migration import accepted" "$([ -n "$mtask" ] && echo yes || echo no)" "yes"
+  check "migration import succeeds" "$(wait_task "${mtask:-0}" 240)" "succeeded"
+
+  # The archive's own content must be live.
+  [ -f "$MROOT/current/imported-marker.txt" ] && ok "migrated files are live" || bad "migrated files are live"
+
+  # THE regression: the connector must survive an import, or cache
+  # invalidation is silently dead for the rest of the site's life.
+  [ -f "$MROOT/current/wp-content/mu-plugins/slipstream-connector.php" ] \
+    && ok "cache connector survives migration" \
+    || bad "cache connector survives migration (imported release has no mu-plugin)"
+
+  # A migrated site must still serve, and still cache.
+  read -r mcode mfatal <<<"$(serves "$MS" /)"
+  check "migrated site serves" "$mcode" "200"
+  check "migrated site no PHP fatal" "$mfatal" "no"
+  for i in 1 2 3; do curl -sk --resolve "$MS:443:127.0.0.1" -o /dev/null "https://$MS/"; done
+  mhit=$(curl -sk --resolve "$MS:443:127.0.0.1" -D - -o /dev/null "https://$MS/" | grep -io 'x-slipstream-cache: [A-Z]*' | awk '{print $2}')
+  check "migrated site caches" "$mhit" "HIT"
+
+  # The importer must not leave a full database dump lying in the site tree.
+  left=no
+  [ -f "$MROOT/migration.tar.gz" ] && left=yes
+  [ -f "$MROOT/migration.sql" ] && left=yes
+  check "migration inputs cleaned up" "$left" "no"
+
+  check "migration-site delete accepted" "$(delete_site "$MID")" "202"
+  check "migration-site teardown completes" "$(teardown_gone "$MID")" "yes"
 fi
 
 # cleanup woo (also verifies commerce-site teardown)

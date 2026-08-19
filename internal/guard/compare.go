@@ -61,6 +61,55 @@ func Compare(baseline, candidate []Sample, t Thresholds) Report {
 	return r
 }
 
+// BaselineDrift compares two measurements of the same production target taken
+// either side of the candidate run.
+//
+// Guard's promise is that a promotion cannot silently make a site slower. That
+// only holds if the two measurements differ by the candidate and nothing else.
+// On a contended box they do not: a staging clone competing for one CPU and a
+// fixed pool of memory slows production too, and the candidate then carries the
+// blame for the machine. Measuring production twice makes that visible. Any
+// movement past the same threshold used to call a regression means the ground
+// shifted, and the run tells you so instead of blaming the change.
+func BaselineDrift(first, second []Sample, t Thresholds) []string {
+	if t.MaxP95IncreasePct <= 0 {
+		return nil
+	}
+	var reasons []string
+	idx := indexByPath(second)
+	for _, a := range first {
+		b, ok := idx[a.Path]
+		if !ok {
+			continue
+		}
+		lo, hi := a.P95Millis, b.P95Millis
+		if lo > hi {
+			lo, hi = hi, lo
+		}
+		if lo <= 0 || hi-lo < minP95DeltaMillis {
+			continue
+		}
+		if inc := increasePct(lo, hi); inc > t.MaxP95IncreasePct {
+			reasons = append(reasons, fmt.Sprintf(
+				"%s: production itself moved %.0fms → %.0fms (%.0f%%) while the candidate was measured",
+				a.Path, a.P95Millis, b.P95Millis, inc))
+		}
+	}
+	return reasons
+}
+
+// Inconclusive builds the report for a run whose baselines disagreed.
+func Inconclusive(baseline, candidate []Sample, t Thresholds, reasons []string) Report {
+	return Report{
+		Verdict:    VerdictInconclusive,
+		Reasons:    reasons,
+		Baseline:   baseline,
+		Candidate:  candidate,
+		Thresholds: t,
+		MeasuredAt: time.Now().UTC(),
+	}
+}
+
 // judge escalates the verdict when an increase crosses warn (half) or block
 // (full) thresholds. The format receives the extra args plus the increase.
 func (r *Report) judge(incPct, threshold float64, format string, args ...any) {

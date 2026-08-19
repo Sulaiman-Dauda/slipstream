@@ -203,7 +203,13 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 		facts, _ := sysprobe.Probe(a.Paths.SitesRoot)
 		siteMem := site.Config.Resources.MemoryHighMB
 		if siteMem <= 0 && facts.MemTotalMB > 0 {
-			siteMem = int(facts.MemTotalMB / 4)
+			sites := countProvisionedSites(a.Paths.SitesRoot)
+			var floored bool
+			siteMem, floored = autoSiteBudgetMB(facts.MemTotalMB, sites)
+			if floored {
+				a.Log.Warn("site memory budget floored: this server is over-subscribed",
+					"sites", sites, "mem_total_mb", facts.MemTotalMB, "budget_mb", siteMem)
+			}
 		}
 		poolPath, poolContent, err := phpfpm.RenderPool(site, siteMem)
 		if err != nil {
@@ -525,6 +531,58 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 	}
 	// Install the Slipstream connector for precise cache invalidation.
 	return installConnector(dir)
+}
+
+// autoSiteBudgetMB is the memory a site may size its PHP workers against when
+// the operator has not set a limit.
+//
+// A quarter of the machine is the budget for one site: the rest belongs to
+// MariaDB, nginx, the panel and the OS. That quarter is then shared, because
+// the budget is a claim on one pool of memory and every site was previously
+// handed the whole quarter regardless of how many existed. Four sites each
+// sizing themselves for a quarter of RAM is how a box ends up in swap with
+// every individual site looking correctly tuned.
+//
+// One site therefore gets exactly what it always did; only the multi-site
+// case changes. The floor is the smallest budget that still yields the two
+// workers SizeWorkers insists on, because a site with fewer cannot serve.
+// It returns floored=true when the share fell below that minimum, which means
+// the machine is genuinely over-subscribed: the sites cannot all be given a
+// working budget out of the pool. That is reported rather than hidden, because
+// the alternative is a box that swaps while every site's config looks sane.
+func autoSiteBudgetMB(memTotalMB int64, sites int) (budget int, floored bool) {
+	if sites < 1 {
+		sites = 1
+	}
+	const floorMB = 160
+	share := memTotalMB / 4 / int64(sites)
+	if share < floorMB {
+		return floorMB, true
+	}
+	return int(share), false
+}
+
+// countProvisionedSites counts site trees under the sites root. A directory
+// counts once it has a releases/ directory, which is what provisioning
+// creates, so a half-built site does not inflate the divisor.
+func countProvisionedSites(sitesRoot string) int {
+	entries, err := os.ReadDir(sitesRoot)
+	if err != nil {
+		return 1
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(sitesRoot, e.Name(), "releases")); err == nil && fi.IsDir() {
+			n++
+		}
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // installConnector writes the cache-invalidation mu-plugin into a WordPress

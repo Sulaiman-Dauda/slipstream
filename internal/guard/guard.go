@@ -55,6 +55,10 @@ const (
 	VerdictPass  Verdict = "pass"
 	VerdictWarn  Verdict = "warn"
 	VerdictBlock Verdict = "block"
+	// VerdictInconclusive means the machine moved during the run, so the
+	// comparison cannot separate the candidate from the noise. It is not a
+	// regression and must not be reported as one.
+	VerdictInconclusive Verdict = "inconclusive"
 )
 
 // Report is the full comparison, stored on the deployment record and shown
