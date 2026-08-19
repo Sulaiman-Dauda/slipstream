@@ -116,3 +116,44 @@ func TestFasterCandidateNeverFlagged(t *testing.T) {
 		t.Fatalf("improvement flagged: %s %v", rep.Verdict, rep.Reasons)
 	}
 }
+
+// Guard's verdict is only meaningful if production behaved the same either
+// side of the candidate. On a contended box it does not, and the candidate
+// gets blamed for the machine — the failure mode that makes operators start
+// passing --force.
+func TestBaselineDriftSeparatesTheMachineFromTheChange(t *testing.T) {
+	th := DefaultThresholds()
+
+	steady := []Sample{{Path: "/", Requests: 10, P95Millis: 400}}
+	same := []Sample{{Path: "/", Requests: 10, P95Millis: 412}}
+	if got := BaselineDrift(steady, same, th); len(got) != 0 {
+		t.Errorf("a steady box reported drift: %v", got)
+	}
+
+	// Under the absolute noise floor, so not drift however large the ratio.
+	tiny := []Sample{{Path: "/", Requests: 10, P95Millis: 10}}
+	tinyUp := []Sample{{Path: "/", Requests: 10, P95Millis: 30}}
+	if got := BaselineDrift(tiny, tinyUp, th); len(got) != 0 {
+		t.Errorf("noise floor not applied: %v", got)
+	}
+
+	// The real case: production more than doubled while staging was measured.
+	moved := []Sample{{Path: "/", Requests: 10, P95Millis: 1100}}
+	if got := BaselineDrift(steady, moved, th); len(got) != 1 {
+		t.Fatalf("drift not detected, got %v", got)
+	}
+
+	// Drift is direction-agnostic: production getting faster mid-run is just
+	// as much a moving target as it getting slower.
+	if got := BaselineDrift(moved, steady, th); len(got) != 1 {
+		t.Errorf("drift missed when production sped up: %v", got)
+	}
+
+	rep := Inconclusive(steady, moved, th, BaselineDrift(steady, moved, th))
+	if rep.Verdict != VerdictInconclusive {
+		t.Errorf("verdict = %q, want inconclusive", rep.Verdict)
+	}
+	if rep.Verdict == VerdictBlock {
+		t.Error("an unstable machine must never be reported as a regression")
+	}
+}

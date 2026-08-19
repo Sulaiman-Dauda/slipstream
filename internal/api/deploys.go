@@ -309,11 +309,26 @@ func (s *Server) handleSafePush(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("candidate measurement: %w", err)
 		}
 
+		// Re-measure production. Guard can only attribute a difference to the
+		// candidate if production behaved the same either side of it; on a
+		// contended box the staging clone slows production too and the change
+		// takes the blame for the machine.
+		progress(50, "Re-measuring production baseline")
+		recheck, err := baseProber.Measure(ctx, paths)
+		if err != nil {
+			return fmt.Errorf("baseline recheck: %w", err)
+		}
+
 		progress(55, "Comparing performance")
-		report := guard.Compare(baseline, candidate, guard.DefaultThresholds())
+		thresholds := guard.DefaultThresholds()
+		report := guard.Compare(baseline, candidate, thresholds)
+		if drift := guard.BaselineDrift(baseline, recheck, thresholds); len(drift) > 0 {
+			report = guard.Inconclusive(baseline, candidate, thresholds, drift)
+		}
 		reportJSON, _ := json.Marshal(report)
 
-		if report.Verdict == guard.VerdictBlock || (report.Verdict == guard.VerdictWarn && !req.Force) {
+		if report.Verdict == guard.VerdictBlock ||
+			((report.Verdict == guard.VerdictWarn || report.Verdict == guard.VerdictInconclusive) && !req.Force) {
 			dep, _ := s.Store.CreateDeployment(state.Deployment{
 				SiteID: prod.ID, ReleaseID: time.Now().UTC().Format("20060102-150405"),
 				Path: "", Status: state.DeployBlocked, GuardJSON: string(reportJSON),
@@ -321,6 +336,9 @@ func (s *Server) handleSafePush(w http.ResponseWriter, r *http.Request) {
 			_ = dep
 			for _, reason := range report.Reasons {
 				progress(60, reason)
+			}
+			if report.Verdict == guard.VerdictInconclusive {
+				return fmt.Errorf("performance guard: inconclusive, the server was not stable enough to measure — promotion refused (retry when the box is quiet, or force to override)")
 			}
 			return fmt.Errorf("performance guard verdict: %s — promotion refused", report.Verdict)
 		}

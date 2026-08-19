@@ -655,3 +655,65 @@ func TestInstallConnectorAddsMuPluginWithoutClobbering(t *testing.T) {
 		t.Errorf("connector not created in bare tree: %v", err)
 	}
 }
+
+// Every site used to be handed a quarter of the machine no matter how many
+// existed, so four sites each sized themselves for a quarter of RAM and the
+// box went to swap with every site looking correctly tuned.
+func TestAutoSiteBudgetDividesAcrossSites(t *testing.T) {
+	const mem = 2048
+
+	// One site must be exactly what it always was, or this changes tuning
+	// for every existing single-site install.
+	if got, floored := autoSiteBudgetMB(mem, 1); got != 512 || floored {
+		t.Errorf("single site budget = %d, want 512 (unchanged behaviour)", got)
+	}
+	if got, _ := autoSiteBudgetMB(mem, 0); got != 512 {
+		t.Errorf("zero sites should be treated as one, got %d", got)
+	}
+
+	if got, floored := autoSiteBudgetMB(mem, 2); got != 256 || floored {
+		t.Errorf("two sites = %d, want 256", got)
+	}
+
+	// The share never drops below what two PHP workers need, because a site
+	// with fewer cannot serve at all.
+	got, floored := autoSiteBudgetMB(mem, 100)
+	if got != 160 || !floored {
+		t.Errorf("floor = %d floored=%v, want 160 true", got, floored)
+	}
+
+	// While the floor is not binding, the sites' combined claim must fit the
+	// pool. Once it binds the box is over-subscribed and says so, which is the
+	// honest outcome: three workers cannot be conjured from 512 MB.
+	for _, sites := range []int{1, 2, 3} {
+		b, floored := autoSiteBudgetMB(mem, sites)
+		if floored {
+			continue
+		}
+		if total := b * sites; total > mem/4 {
+			t.Errorf("%d sites claim %d MB, more than the %d MB pool", sites, total, mem/4)
+		}
+	}
+	if _, floored := autoSiteBudgetMB(mem, 4); !floored {
+		t.Error("4 sites on 2 GB is over-subscribed and should report it")
+	}
+}
+
+func TestCountProvisionedSitesIgnoresHalfBuiltTrees(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"a.com/releases", "b.com/releases"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// No releases/ yet: provisioning has not finished, so it must not count.
+	if err := os.MkdirAll(filepath.Join(root, "c.com"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if got := countProvisionedSites(root); got != 2 {
+		t.Errorf("counted %d sites, want 2", got)
+	}
+	if got := countProvisionedSites(filepath.Join(root, "nope")); got != 1 {
+		t.Errorf("missing root should fall back to 1, got %d", got)
+	}
+}
