@@ -615,3 +615,43 @@ func TestCreateSiteRejectsUninstalledPHPVersion(t *testing.T) {
 		t.Errorf("must not block when versions cannot be enumerated: %v", err)
 	}
 }
+
+// The migration import used to hand back a release with no mu-plugins
+// directory at all, which silently disabled cache invalidation on every
+// imported site. installConnector is what both provisioning and import now
+// call; this covers the helper itself, including that it leaves any
+// mu-plugins the imported site already had in place.
+func TestInstallConnectorAddsMuPluginWithoutClobbering(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "wp-content", "mu-plugins")
+	if err := os.MkdirAll(existing, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(existing, "theirs.php"), []byte("<?php // theirs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installConnector(dir); err != nil {
+		t.Fatalf("installConnector: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(existing, "slipstream-connector.php"))
+	if err != nil {
+		t.Fatalf("connector not installed: %v", err)
+	}
+	if string(got) != ConnectorPHP {
+		t.Error("connector contents do not match ConnectorPHP")
+	}
+	if _, err := os.Stat(filepath.Join(existing, "theirs.php")); err != nil {
+		t.Errorf("pre-existing mu-plugin was removed: %v", err)
+	}
+
+	// A tree with no wp-content at all is the common import case.
+	bare := t.TempDir()
+	if err := installConnector(bare); err != nil {
+		t.Fatalf("installConnector on bare tree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(bare, "wp-content", "mu-plugins", "slipstream-connector.php")); err != nil {
+		t.Errorf("connector not created in bare tree: %v", err)
+	}
+}

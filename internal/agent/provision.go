@@ -524,6 +524,18 @@ func (a *Agent) installWordPress(ctx context.Context, site state.Site, dir strin
 		return err
 	}
 	// Install the Slipstream connector for precise cache invalidation.
+	return installConnector(dir)
+}
+
+// installConnector writes the cache-invalidation mu-plugin into a WordPress
+// tree. It is called on the staging directory rather than a live release, so
+// the recursive chown in DeployRelease gives it the site's ownership.
+//
+// Both site creation and migration import need this. A migrated site that
+// lacks it looks healthy and serves cached pages correctly, but nothing ever
+// purges them: an edit stays invisible until fastcgi_cache_valid expires,
+// which reads to the site owner as "my change did not save".
+func installConnector(dir string) error {
 	muDir := filepath.Join(dir, "wp-content", "mu-plugins")
 	if err := os.MkdirAll(muDir, 0o750); err != nil {
 		return err

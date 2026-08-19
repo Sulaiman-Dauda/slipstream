@@ -78,6 +78,14 @@ func (a *Agent) ImportMigration(p rpc.MigrationParams) (rpc.MigrationResult, err
 		}
 		defer os.RemoveAll(newUploads)
 	}
+	// An imported tree carries the old host's wp-content, so it has no
+	// connector. Reinstate it before the release is built, so DeployRelease's
+	// recursive chown covers it and cache invalidation survives the import.
+	if p.Site.Type == state.SiteWordPress || p.Site.Type == state.SiteWooCommerce {
+		if err := installConnector(source); err != nil {
+			return rpc.MigrationResult{}, fmt.Errorf("reinstall cache connector: %w", err)
+		}
+	}
 	dep, err := a.DeployRelease(rpc.DeployParams{Site: p.Site, SourceDir: source, ReleaseID: p.ReleaseID})
 	if err != nil {
 		return rpc.MigrationResult{}, err
