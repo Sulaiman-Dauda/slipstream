@@ -78,7 +78,7 @@ measured worse are in [docs/benchmarks.md](./docs/benchmarks.md). The suite is i
 | --- | --- |
 | OS | Ubuntu 24.04 LTS or 26.04 LTS |
 | Architecture | amd64 |
-| RAM | 2 GB minimum |
+| RAM | 1 GB minimum, 2 GB recommended |
 | Disk | 10 GB free |
 | Ports | 80 and 443 must be free — Slipstream owns them |
 

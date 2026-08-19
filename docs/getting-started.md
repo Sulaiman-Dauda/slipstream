@@ -14,7 +14,7 @@ You need:
 | | |
 | --- | --- |
 | A fresh server | Ubuntu 24.04 LTS or 26.04 LTS, amd64 |
-| RAM | 2 GB minimum |
+| RAM | 1 GB minimum, 2 GB recommended |
 | Disk | 10 GB free |
 | Ports 80 and 443 | free — the installer refuses to run otherwise |
 | Root access | over SSH |

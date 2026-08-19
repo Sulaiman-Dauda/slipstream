@@ -8,7 +8,7 @@ Symptoms first, since that is what you have when something is wrong.
 | --- | --- |
 | `port 80 is already in use` | something else is serving. Slipstream must own 80 and 443 — use a clean server |
 | `Slipstream supports Ubuntu 24.04 / 26.04 LTS only` | unsupported OS. These are the two that are tested |
-| `at least 2 GB of RAM required` | it will not fit reliably below that |
+| `at least 1 GB of RAM required` | it will not fit below that. A "1 GB" cloud instance reports ~955 MB, which passes |
 | `another control panel is installed` | remove it, or use a fresh server |
 
 These are checked before anything is installed, so a refusal leaves the machine untouched — no
