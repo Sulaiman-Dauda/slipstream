@@ -173,14 +173,32 @@ var editableSettings = map[string]bool{
 	"probe_target":      true,
 }
 
+// Settings the UI may read but not write, because they record what an
+// operation did rather than what an operator typed. panel_domain is set when
+// a panel certificate is issued; letting it be edited freely would let the
+// panel claim a domain it holds no certificate for.
+//
+// It was previously written by the certificate handler and never returned by
+// GET, so the field it populates sat empty after every refresh and there was
+// no way to tell whether a domain had ever been attached.
+var readOnlySettings = map[string]bool{
+	"panel_domain": true,
+}
+
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	out := map[string]string{}
-	for key := range editableSettings {
+	read := func(key string) {
 		v, _ := s.Store.GetSetting(key, "")
 		if key == "backup_password" && v != "" {
 			v = "••••••••" // presence indicator only
 		}
 		out[key] = v
+	}
+	for key := range editableSettings {
+		read(key)
+	}
+	for key := range readOnlySettings {
+		read(key)
 	}
 	respond(w, http.StatusOK, out)
 }
@@ -192,6 +210,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for key := range req {
+		if readOnlySettings[key] {
+			respondErr(w, http.StatusBadRequest, key+" is set by the operation that owns it, not here")
+			return
+		}
 		if !editableSettings[key] {
 			respondErr(w, http.StatusBadRequest, "unknown setting "+key)
 			return
