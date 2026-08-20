@@ -17,7 +17,7 @@ export default function Security({ me, onChange }: { me: Me; onChange: () => voi
       {toast.node}
       <div className="card-list">
         <PasswordCard run={run} busy={busy} />
-        <TwoFactorCard me={me} run={run} busy={busy} onChange={onChange} toast={toast} />
+        <TwoFactorCard me={me} run={run} busy={busy} onChange={onChange} />
       </div>
       <h2>Active sessions</h2>
       <Sessions run={run} />
@@ -30,20 +30,46 @@ type RunFn = (fn: () => Promise<unknown>, ok?: string) => Promise<boolean>;
 function PasswordCard({ run, busy }: { run: RunFn; busy: boolean }) {
   const [cur, setCur] = useState("");
   const [next, setNext] = useState("");
-  const submit = (e: FormEvent) => { e.preventDefault(); run(() => api.post("/api/account/password", { current_password: cur, new_password: next }), "Password changed").then((ok) => { if (ok) { setCur(""); setNext(""); } }); };
+  const [confirm, setConfirm] = useState("");
+  const [reveal, setReveal] = useState(false);
+
+  // Typed far enough to judge, so saying so now beats failing on submit.
+  const mismatch = confirm !== "" && next !== confirm;
+  const tooShort = next !== "" && next.length < 12;
+  const ready = cur !== "" && next.length >= 12 && next === confirm;
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!ready) return;
+    run(() => api.post("/api/account/password", { current_password: cur, new_password: next }), "Password changed")
+      .then((ok) => { if (ok) { setCur(""); setNext(""); setConfirm(""); setReveal(false); } });
+  };
+
+  const type = reveal ? "text" : "password";
   return (
     <form className="card" onSubmit={submit}>
-      <div className="card-head"><span className="card-ico"><Icon.lock /></span><h3 style={{ margin: 0 }}>Change password</h3></div>
+      <div className="card-head">
+        <span className="card-ico"><Icon.lock /></span>
+        <h3 style={{ margin: 0 }}>Change password</h3>
+        <button type="button" className="reveal-toggle end" onClick={() => setReveal((v) => !v)}
+          aria-pressed={reveal} title={reveal ? "Hide passwords" : "Show passwords"}>
+          {reveal ? <Icon.eyeOff /> : <Icon.eye />}{reveal ? "Hide" : "Show"}
+        </button>
+      </div>
       <label>Current password</label>
-      <input type="password" value={cur} onChange={(e) => setCur(e.target.value)} required />
+      <input type={type} value={cur} onChange={(e) => setCur(e.target.value)} autoComplete="current-password" required />
       <label>New password <span className="hint">12+ characters</span></label>
-      <input type="password" value={next} onChange={(e) => setNext(e.target.value)} minLength={12} required />
-      <button className="mt" disabled={busy}>Update password</button>
+      <input type={type} value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" minLength={12} required />
+      {tooShort && <p className="note tiny warn">{12 - next.length} more character{12 - next.length === 1 ? "" : "s"} needed.</p>}
+      <label>Confirm new password</label>
+      <input type={type} value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
+      {mismatch && <p className="note tiny warn">Both new password fields must match.</p>}
+      <button className="mt" disabled={busy || !ready}>Update password</button>
     </form>
   );
 }
 
-function TwoFactorCard({ me, run, busy, onChange, toast }: { me: Me; run: RunFn; busy: boolean; onChange: () => void; toast: ReturnType<typeof useToast> }) {
+function TwoFactorCard({ me, run, busy, onChange }: { me: Me; run: RunFn; busy: boolean; onChange: () => void }) {
   const [enroll, setEnroll] = useState<{ secret: string; qr_data: string } | null>(null);
   const [code, setCode] = useState("");
   const [disablePw, setDisablePw] = useState("");
@@ -81,7 +107,6 @@ function TwoFactorCard({ me, run, busy, onChange, toast }: { me: Me; run: RunFn;
           <button className="mt" disabled={busy} onClick={begin}>Set up 2FA</button>
         </>
       )}
-      {toast.node}
     </div>
   );
 }

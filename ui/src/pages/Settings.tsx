@@ -9,9 +9,16 @@ export default function Settings() {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [panelDomain, setPanelDomain] = useState("");
 
-  useEffect(() => {
-    api.get<Record<string, string>>("/api/settings").then((s) => { setSettings(s); setPanelDomain(s.panel_domain || ""); }).catch(() => undefined);
-  }, []);
+  const [attached, setAttached] = useState("");
+
+  const loadSettings = () =>
+    api.get<Record<string, string>>("/api/settings").then((s) => {
+      setSettings(s);
+      setAttached(s.panel_domain || "");
+      setPanelDomain(s.panel_domain || "");
+    }).catch(() => undefined);
+
+  useEffect(() => { loadSettings(); }, []);
 
   const saveSettings = (e: FormEvent) => {
     e.preventDefault();
@@ -21,7 +28,10 @@ export default function Settings() {
 
   const issuePanelCert = () =>
     run(() => api.post("/api/panel/certificate", { domain: panelDomain, email: settings.acme_email }),
-      "Requesting certificate — the panel will restart on the new domain");
+      "Requesting certificate. The panel will restart on the new domain.")
+      // Re-read so the card shows the attached domain rather than leaving the
+      // operator to guess whether it took.
+      .then((ok) => { if (ok) loadSettings(); });
 
   return (
     <>
@@ -33,9 +43,14 @@ export default function Settings() {
         <div className="card">
           <div className="card-head"><span className="card-ico"><Icon.globe /></span><h3 style={{ margin: 0 }}>Panel domain & HTTPS</h3></div>
           <p className="note">Point a domain at this server, then secure the panel with an automatically renewed certificate.</p>
+          {attached
+            ? <div className="ok-box"><Icon.check /> Panel is attached to <strong>{attached}</strong>, with a certificate that renews automatically.</div>
+            : <p className="note tiny">No domain attached yet. The panel is reachable on this server&rsquo;s IP address.</p>}
           <label>Panel domain</label>
           <input value={panelDomain} onChange={(e) => setPanelDomain(e.target.value)} placeholder="panel.yourdomain.com" />
-          <button className="mt" disabled={busy || !panelDomain || !settings.acme_email} onClick={issuePanelCert}>Secure panel with Let's Encrypt</button>
+          <button className="mt" disabled={busy || !panelDomain || !settings.acme_email || panelDomain === attached} onClick={issuePanelCert}>
+            {attached ? (panelDomain === attached ? "Certificate already issued" : "Move panel to this domain") : "Secure panel with Let's Encrypt"}
+          </button>
           {!settings.acme_email && <p className="note tiny">Set the ACME email below first.</p>}
         </div>
 

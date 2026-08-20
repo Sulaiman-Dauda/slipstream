@@ -529,6 +529,17 @@ pre.log {
 .filerow .ico { width: 16px; flex: none; display: grid; place-items: center; color: var(--text-2); }
 .filerow.dim { cursor: default; }
 
+/* Reveal toggle on password fields: one control per form, because the point
+   is comparing the new password against its confirmation. */
+.reveal-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: 1px solid var(--border); color: var(--text-2);
+  min-height: 28px; padding: 0 10px; border-radius: var(--r-sm);
+  font-size: 12.5px; line-height: 1;
+}
+.reveal-toggle:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border-2); }
+.note.tiny.warn { color: var(--bad); }
+
 /* Theme toggle button in sidebar */
 .icon-btn {
   background: transparent; border: 1px solid var(--border); color: var(--text-2);
