@@ -62,6 +62,11 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		}, &res); err != nil {
 			return err
 		}
+		// Refresh the hashes of panel-owned files this release rewrote, so
+		// drift compares against what is actually expected now.
+		for _, f := range res.Managed {
+			_ = s.Store.RecordManagedFile(f.Path, f.SHA256)
+		}
 		_, err := s.Store.CreateDeployment(state.Deployment{
 			SiteID: site.ID, ReleaseID: res.ReleaseID, Path: res.Path,
 			Checksum: res.Checksum, Status: state.DeployCreated,
@@ -350,6 +355,9 @@ func (s *Server) handleSafePush(w http.ResponseWriter, r *http.Request) {
 			Site: prod, SourceDir: filepath.Join(stg.RootPath, "current"), ReleaseID: releaseID,
 		}, &deployRes); err != nil {
 			return err
+		}
+		for _, f := range deployRes.Managed {
+			_ = s.Store.RecordManagedFile(f.Path, f.SHA256)
 		}
 		dep, err := s.Store.CreateDeployment(state.Deployment{
 			SiteID: prod.ID, ReleaseID: releaseID, Path: deployRes.Path,

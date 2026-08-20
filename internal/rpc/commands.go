@@ -76,6 +76,10 @@ type DeployResult struct {
 	ReleaseID string `json:"release_id"`
 	Path      string `json:"path"`
 	Checksum  string `json:"checksum"`
+	// Managed are panel-owned files this deploy (re)wrote, so their recorded
+	// hashes can be refreshed. Without it a connector rewritten by a deploy
+	// after a panel upgrade would be reported as drift against a stale hash.
+	Managed []ManagedFile `json:"managed,omitempty"`
 }
 
 // ReleaseParams promotes or rolls back a release symlink.
