@@ -184,6 +184,36 @@ if [ "$st" = active ]; then
   # purge
   pg=$(c -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/sites/$FID/purge")
   check "cache purge accepted" "$pg" "200"
+  # ---- Block theme: a site-wide template object must purge the whole site.
+  # Editing a header, footer, global style or navigation in the Site Editor
+  # used to purge only the homepage and the feed, because those posts have no
+  # permalink, no archive and no terms. Every interior page then kept serving
+  # the old header until TTL, up to 24 hours on the Maximum profile.
+  #
+  # The connector posts its purge non-blocking, which WP-CLI drops when the
+  # process exits, so this intercepts the outgoing request and asserts the
+  # payload instead of watching the cache.
+  cat > /tmp/slip-e2e-purge.php <<'PHPEOF'
+<?php
+add_filter('pre_http_request', function ($pre, $args, $url) {
+    if (strpos($url, '/api/connector/purge') !== false) { echo "PAYLOAD:" . $args['body'] . "\n"; }
+    return ['response' => ['code' => 200], 'body' => '{}', 'headers' => [], 'cookies' => []];
+}, 10, 3);
+$id = wp_insert_post(['post_type' => 'wp_template_part', 'post_status' => 'publish',
+    'post_name' => 'e2e-footer', 'post_title' => 'E2E Footer', 'post_content' => '<p>a</p>']);
+wp_update_post(['ID' => $id, 'post_content' => '<p>b</p>']);
+wp_delete_post($id, true);
+PHPEOF
+  SU=$(site_get "$FID" | jqget "['system_user']")
+  cp /tmp/slip-e2e-purge.php "/srv/sites/$FS/current/slip-e2e-purge.php"
+  chown "$SU:$SU" "/srv/sites/$FS/current/slip-e2e-purge.php"
+  payload=$(sudo -u "$SU" wp --path="/srv/sites/$FS/current" eval-file "/srv/sites/$FS/current/slip-e2e-purge.php" 2>/dev/null | grep '^PAYLOAD:' | head -1)
+  rm -f "/srv/sites/$FS/current/slip-e2e-purge.php" /tmp/slip-e2e-purge.php
+  case "$payload" in
+    *'"all":true'*) ok "template part edit purges the whole site" ;;
+    *) bad "template part edit purges only ${payload:-nothing} (interior pages keep a stale header)" ;;
+  esac
+
   # staging clone
   stg=$(c -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/sites/$FID/staging")
   check "staging clone accepted" "$stg" "202"

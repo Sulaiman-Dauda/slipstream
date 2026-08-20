@@ -133,12 +133,32 @@ final class Slipstream_Connector
     }
 
     /** Purge exactly the URLs affected by a post changing, not the site. */
+    /**
+     * Post types whose content is site-wide rather than tied to one URL.
+     * Block themes store the header, footer, templates, global styles and
+     * navigation as posts of these types.
+     */
+    private const SITEWIDE_TYPES = ['wp_template_part', 'wp_template', 'wp_global_styles', 'wp_navigation'];
+
     public static function on_post_change(string $new_status, string $old_status, WP_Post $post): void
     {
         if ($new_status !== 'publish' && $old_status !== 'publish') {
             return;
         }
         if (wp_is_post_revision($post) || wp_is_post_autosave($post)) {
+            return;
+        }
+
+        // A template, template part, global style or navigation block can
+        // appear on any URL of the site, so there is no smaller correct purge
+        // than all of it. Left to the per-post logic below these collapse to
+        // the homepage and the feed, because they have no real permalink, no
+        // archive and no terms -- so every interior page keeps serving the old
+        // header and footer until its TTL expires, which on the Maximum
+        // profile is 24 hours. WordPress ships a block theme by default, so
+        // this is the common case rather than an edge one.
+        if (in_array($post->post_type, self::SITEWIDE_TYPES, true)) {
+            self::purge_all();
             return;
         }
 

@@ -717,3 +717,34 @@ func TestCountProvisionedSitesIgnoresHalfBuiltTrees(t *testing.T) {
 		t.Errorf("missing root should fall back to 1, got %d", got)
 	}
 }
+
+// A block theme keeps its header, footer, templates, global styles and
+// navigation in posts that have no permalink, no archive and no terms, so the
+// per-post purge collapses to the homepage and the feed and every interior
+// page keeps serving a stale header. WordPress ships a block theme by default,
+// so this is the common case.
+//
+// This is a tripwire on the connector source rather than a behavioural test:
+// the behaviour needs WordPress, and e2e-verify.sh asserts the emitted payload
+// on a real site. It still catches the regression that matters, which is
+// someone removing a type from the list.
+func TestConnectorPurgesSiteWideForBlockThemeObjects(t *testing.T) {
+	for _, pt := range []string{"wp_template_part", "wp_template", "wp_global_styles", "wp_navigation"} {
+		if !strings.Contains(ConnectorPHP, "'"+pt+"'") {
+			t.Errorf("connector does not mention %s, so editing it will not purge the site", pt)
+		}
+	}
+	if !strings.Contains(ConnectorPHP, "SITEWIDE_TYPES") {
+		t.Fatal("SITEWIDE_TYPES is gone from the connector")
+	}
+	// The delegation must happen before the per-post URL set is built, or the
+	// site-wide types fall through to it and purge the homepage alone.
+	guard := strings.Index(ConnectorPHP, "in_array($post->post_type, self::SITEWIDE_TYPES")
+	urls := strings.Index(ConnectorPHP, "$urls = [")
+	if guard < 0 || urls < 0 {
+		t.Fatal("expected both the site-wide guard and the per-post URL set")
+	}
+	if guard > urls {
+		t.Error("the site-wide guard runs after the per-post URL set, so it never takes effect")
+	}
+}
