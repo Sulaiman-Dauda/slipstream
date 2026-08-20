@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/slipstream-panel/slipstream/internal/rpc"
+	"github.com/slipstream-panel/slipstream/internal/state"
 )
 
 var releaseIDRe = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}$|^initial$`)
@@ -78,6 +79,24 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 		}
 	}
 
+	// A deployed tree is whatever the operator handed over, and a build
+	// artefact from CI will not contain our mu-plugin. Without this the
+	// promoted release has no connector: the site serves 200, nginx still
+	// caches, nothing is logged, and no purge ever fires again. Installed
+	// before the chown below so it picks up the site's ownership like every
+	// other file in the release.
+	var managed []rpc.ManagedFile
+	if site.Type == state.SiteWordPress || site.Type == state.SiteWooCommerce {
+		if err := installConnector(releaseDir); err != nil {
+			return fail(fmt.Errorf("install cache connector: %w", err))
+		}
+		sum := sha256.Sum256([]byte(ConnectorPHP))
+		managed = append(managed, rpc.ManagedFile{
+			Path:   filepath.Join(site.RootPath, "current", "wp-content", "mu-plugins", "slipstream-connector.php"),
+			SHA256: hex.EncodeToString(sum[:]),
+		})
+	}
+
 	if _, err := a.Runner.Run(ctx, "chown", "-R", site.SystemUser+":"+site.SystemUser, releaseDir); err != nil {
 		return fail(err)
 	}
@@ -99,7 +118,7 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 	if err != nil {
 		return fail(err)
 	}
-	return rpc.DeployResult{ReleaseID: p.ReleaseID, Path: releaseDir, Checksum: sum}, nil
+	return rpc.DeployResult{ReleaseID: p.ReleaseID, Path: releaseDir, Checksum: sum, Managed: managed}, nil
 }
 
 // PromoteRelease atomically points current at a release and reloads PHP so

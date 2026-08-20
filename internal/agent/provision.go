@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -253,6 +255,19 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 		rollback()
 		return nil, err
 	}
+	// The connector is a panel-owned file like any rendered config, so drift
+	// must cover it -- a site whose connector was removed by a deploy or a
+	// tidy-up looks perfectly healthy while silently never invalidating its
+	// cache again. Tracked at the stable current/ path rather than inside a
+	// release, so it survives promotions instead of going stale on each one.
+	if site.Type == state.SiteWordPress || site.Type == state.SiteWooCommerce {
+		sum := sha256.Sum256([]byte(ConnectorPHP))
+		managed = append(managed, rpc.ManagedFile{
+			Path:   filepath.Join(site.RootPath, "current", "wp-content", "mu-plugins", "slipstream-connector.php"),
+			SHA256: hex.EncodeToString(sum[:]),
+		})
+	}
+
 	return managed, nil
 }
 

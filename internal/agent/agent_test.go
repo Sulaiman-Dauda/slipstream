@@ -748,3 +748,48 @@ func TestConnectorPurgesSiteWideForBlockThemeObjects(t *testing.T) {
 		t.Error("the site-wide guard runs after the per-post URL set, so it never takes effect")
 	}
 }
+
+// A deploy copies whatever source tree it was given. A build artefact from CI
+// contains no mu-plugins, so without an explicit reinstall the promoted
+// release has no connector: the site serves 200, nginx still caches, nothing
+// is logged, and no purge ever fires again.
+func TestDeployReleaseInstallsConnectorForWordPress(t *testing.T) {
+	for _, tc := range []struct {
+		typ  state.SiteType
+		want bool
+	}{
+		{state.SiteWordPress, true},
+		{state.SiteWooCommerce, true},
+		{state.SiteStatic, false},
+	} {
+		t.Run(string(tc.typ), func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "build")
+			// A build artefact: site files, deliberately no mu-plugins.
+			if err := os.MkdirAll(filepath.Join(source, "wp-content", "themes"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(source, "index.php"), []byte("<?php\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			a := &Agent{Runner: &mockRunner{}, Paths: Paths{SitesRoot: root}}
+			site := state.Site{Domain: "x.com", Type: tc.typ, SystemUser: "slip-site-9", RootPath: filepath.Join(root, "x.com")}
+			if err := os.MkdirAll(filepath.Join(site.RootPath, "releases"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.DeployRelease(rpc.DeployParams{Site: site, SourceDir: source, ReleaseID: "20260820-101010"}); err != nil {
+				t.Fatalf("deploy: %v", err)
+			}
+
+			conn := filepath.Join(site.RootPath, "releases", "20260820-101010", "wp-content", "mu-plugins", "slipstream-connector.php")
+			_, err := os.Stat(conn)
+			if tc.want && err != nil {
+				t.Errorf("%s deploy left no connector, so the site would stop invalidating its cache", tc.typ)
+			}
+			if !tc.want && err == nil {
+				t.Errorf("%s is not WordPress and should not get a connector", tc.typ)
+			}
+		})
+	}
+}
