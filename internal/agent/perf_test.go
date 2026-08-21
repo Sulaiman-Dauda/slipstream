@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,5 +60,25 @@ func TestPathOf(t *testing.T) {
 		if got := pathOf(in, "example.com"); got != want {
 			t.Errorf("pathOf(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestObjectCacheDropinBehaviour runs the drop-in's own suite under both settings of
+// apc.enable_cli. The zero case is the one every wp-cli process runs in, and it is where
+// the drop-in used to install itself over a segment it could not reach: set, add, delete,
+// incr and decr all returned false, and a flush threw. Skips when php is not installed.
+func TestObjectCacheDropinBehaviour(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php not installed")
+	}
+	for _, cli := range []string{"0", "1"} {
+		t.Run("apc.enable_cli="+cli, func(t *testing.T) {
+			cmd := exec.Command(php, "-d", "apc.enable_cli="+cli, "../../connector/object-cache-apcu.test.php")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Errorf("drop-in suite failed:\n%s", out)
+			}
+		})
 	}
 }
