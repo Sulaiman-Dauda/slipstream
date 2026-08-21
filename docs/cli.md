@@ -20,7 +20,12 @@ export SLIPSTREAM_PASSWORD='your-password'
 Certificate verification is skipped automatically for `127.0.0.1`, `localhost` and `::1`, because
 the panel starts on a self-signed certificate. For anything else, verification applies.
 
-If the account has 2FA enabled, use the panel UI — `slipctl` does not prompt for a TOTP code.
+If the account has 2FA enabled, use the panel UI: `slipctl` does not prompt for a TOTP code.
+
+### Locked out
+
+If nobody can sign in, recovery is on the server itself. See
+[Recovering access](#recovering-access) below.
 
 `slipctl --version` prints the version and exits. So do `panel-api --version` and
 `panel-agent --version`; neither starts the daemon.
@@ -155,3 +160,40 @@ in the old repository, so keep its password if you might need them.
 ## Exit codes
 
 `0` success. Non-zero on failure, with the error on stderr — safe to use in scripts and CI.
+
+## Recovering access
+
+Losing the panel password used to mean losing the panel. There was no reset, no way to
+create an account from the host, and the only password endpoint needed a session you could
+not get. Root on the box could read the database holding the accounts and could not do
+anything with it.
+
+As root on the server:
+
+```bash
+panel-api recover-admin                                   # list the accounts
+panel-api recover-admin --email you@example.com           # reset that one
+panel-api recover-admin --email you@example.com --disable-2fa
+```
+
+**Physical access to the server is the credential.** That is the same trust boundary every
+other recovery mechanism uses and it is not a weakening: anyone with root can already read
+the state database, replace the binaries and read the TLS keys. Refusing to help them did
+not make the panel safer, it only made it brittle.
+
+It works whether the panel is running, stopped, or has never completed setup: it opens the
+state database directly rather than going through the API.
+
+| What it does | Why |
+|---|---|
+| Generates the password rather than accepting one | A password in `--password` is in the shell history and in `ps` for every user on the box |
+| Prints it once and stores it nowhere | It is a credential, not a record |
+| Revokes that account's open sessions | If the reason for the reset is that somebody else has the old password, leaving their session alive achieves nothing |
+| Refuses to guess when several accounts exist | Resetting the wrong one is a silent failure that looks like a working recovery. It lists them instead |
+| Creates the first admin if the panel has none | Setup that never completed, or an only-account that was deleted. The installer token is long gone by then |
+| Leaves an audit event | It is a recovery path into an admin panel |
+| Warns if no admin remains | Every admin deleted leaves operators who cannot create one, and a reset alone does not fix that |
+
+`--disable-2fa` is opt-in and separate, because silently removing somebody's second factor
+would be worse than the lockout it solves. Without it, an account with 2FA still on is
+reported as such.

@@ -31,11 +31,28 @@ func env(key, def string) string {
 }
 
 func main() {
+	// The way back in for whoever owns the machine. Dispatched first: ahead of the version
+	// flag handler, which would otherwise swallow this subcommand's own --help, and ahead of
+	// everything the daemon does, so it runs on a box where the panel is up, down, or has
+	// never worked at all.
+	if len(os.Args) > 1 && os.Args[1] == "recover-admin" {
+		if err := runRecoverAdmin(env("SLIPSTREAM_STATE", "/var/lib/slipstream/state.db"), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "panel-api recover-admin: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if version.HandleFlag(os.Args[1:], "panel-api", `Slipstream's control plane: the HTTP API and embedded web UI. Started by
 systemd as slipstream-api.service; it is not normally run by hand.
 
 Runs unprivileged and delegates privileged work to panel-agent over an
 authenticated Unix socket.
+
+Locked out? As root on this machine:
+  panel-api recover-admin                       list the accounts
+  panel-api recover-admin --email you@example.com
+  panel-api recover-admin --email you@example.com --disable-2fa
 
 Environment:
   SLIPSTREAM_LISTEN             listen address (default 127.0.0.1:5252)
@@ -48,6 +65,7 @@ Environment:
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	statePath := env("SLIPSTREAM_STATE", "/var/lib/slipstream/state.db")
+
 	socket := env("SLIPSTREAM_AGENT_SOCKET", "/run/slipstream/agent.sock")
 	tokenFile := env("SLIPSTREAM_AGENT_TOKEN_FILE", "/etc/slipstream/agent.token")
 	listen := env("SLIPSTREAM_LISTEN", "127.0.0.1:5252")
