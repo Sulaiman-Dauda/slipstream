@@ -3,25 +3,53 @@ package agent
 // APCuDropin is the Slipstream object-cache.php drop-in. For a single
 // server, APCu (in-process shared memory) is faster and lighter than Redis:
 // no daemon, no socket hop, no serialization over the wire. It implements
-// WordPress's full WP_Object_Cache contract — global groups, non-persistent
+// WordPress's full WP_Object_Cache contract, global groups, non-persistent
 // groups, multisite blog prefixing, incr/decr, and get_multiple.
 //
+// It degrades to a request-scoped cache when APCu is not usable in the
+// process, which is every wp-cli invocation, and it namespaces every key with
+// an epoch held in a file so a flush from one process reaches the other.
+//
 // The canonical copy lives in connector/object-cache-apcu.php; keep the two
-// in sync via TestObjectCacheCopiesMatch.
+// in sync via TestObjectCacheCopiesMatch, and exercise it with
+// TestObjectCacheDropinBehaviour.
 const APCuDropin = `<?php
 /**
  * Slipstream APCu Object Cache (drop-in).
  * Single-server persistent object cache using APCu shared memory.
- * Managed by Slipstream — do not edit.
+ * Managed by Slipstream. Do not edit.
  */
 
 if (!defined('ABSPATH')) { exit; }
 
-if (!function_exists('apcu_fetch') || !apcu_enabled()) {
-    // APCu unavailable: fall back to the default non-persistent cache by
-    // not defining the drop-in classes. WordPress uses its built-in cache.
-    return;
-}
+/**
+ * Is APCu actually usable in THIS process?
+ *
+ * This used to be a bare return at the top of the file, which did nothing at all. PHP hoists
+ * unconditional top-level function and class declarations at compile time, so every
+ * wp_cache_* function and WP_Object_Cache were declared before the guard ever ran. The
+ * drop-in installed itself on hosts with no APCu, and on every wp-cli invocation, because
+ * apc.enable_cli defaults to 0. Measured on a live box: apcu_enabled() false, and the live
+ * $wp_object_cache still coming from this file.
+ *
+ * The consequences were not theoretical. apcu_add() returns false when the segment is not
+ * initialised, so wp_cache_add() always failed, and WordPress uses it as a lock (doing_cron
+ * is one). And "wp cache flush" fatalled outright: "APC must be enabled to use APCUIterator".
+ *
+ * So the check now sets a flag the class reads, and when APCu is unusable the class behaves
+ * exactly like WordPress's own non-persistent cache: correct, just not shared.
+ */
+define('SLIPSTREAM_OC_APCU', (function () {
+    if (!function_exists('apcu_fetch') || !apcu_enabled()) {
+        return false;
+    }
+    // apcu_enabled() reports apc.enabled and says nothing about apc.enable_cli, which is
+    // what actually decides whether the segment gets initialised in a CLI process.
+    if (PHP_SAPI === 'cli' && !filter_var((string) ini_get('apc.enable_cli'), FILTER_VALIDATE_BOOLEAN)) {
+        return false;
+    }
+    return true;
+})());
 
 function wp_cache_init() { $GLOBALS['wp_object_cache'] = new WP_Object_Cache(); }
 function wp_cache_add($key, $data, $group = '', $expire = 0) { return $GLOBALS['wp_object_cache']->add($key, $data, $group, (int) $expire); }
@@ -45,20 +73,76 @@ function wp_cache_add_non_persistent_groups($groups) { $GLOBALS['wp_object_cache
 function wp_cache_switch_to_blog($blog_id) { $GLOBALS['wp_object_cache']->switch_to_blog($blog_id); }
 
 class WP_Object_Cache {
-    private $prefix = '';         // per-install namespace (from AUTH_KEY)
+    private $prefix = '';         // per-install namespace (from AUTH_KEY) plus the epoch
     private $blog_prefix = 0;
     private $multisite = false;
     private $global_groups = [];
     private $non_persistent = [];
     private $runtime = [];        // per-request cache + non-persistent groups
+    private $apcu = false;        // is the shared segment usable in this process
+    private $site = '';
     public  $cache_hits = 0;
     public  $cache_misses = 0;
 
+    /**
+     * Where the epoch lives.
+     *
+     * APCu is shared memory owned by the PHP-FPM master, so a second process cannot reach
+     * into it. wp-cli is a second process. That means "wp cache flush", and every option
+     * wp-cli writes, left the web tier serving what it had cached, indefinitely, until
+     * something restarted PHP-FPM. On a fresh site that showed up as the panel activating a
+     * theme and the site continuing to serve the old one.
+     *
+     * A file both processes can read fixes it without a daemon. Every key carries an epoch
+     * read from this file, so bumping the file renames the whole namespace and both
+     * processes see the flush at once.
+     *
+     * The epoch is random, not a counter. If the file is lost, a deploy replacing a copied
+     * drop-in is the usual way, a counter would restart at zero and start reading keys some
+     * earlier generation wrote. A fresh random value can only ever miss.
+     */
+    private function epoch_file() {
+        return __DIR__ . '/.slipstream-cache-epoch';
+    }
+
+    // Static, so the file is read once per process rather than once per instance. It has to
+    // be a class property and not a static local: write_epoch() must be able to move it, or
+    // an instance built after a flush in the same process reads the pre-flush value out of
+    // the cached static and addresses the namespace we just abandoned.
+    private static $epoch = null;
+
+    private function epoch() {
+        if (self::$epoch !== null) { return self::$epoch; }
+
+        $raw = @file_get_contents($this->epoch_file());
+        if (is_string($raw) && preg_match('/^[0-9a-f]{16}$/', trim($raw))) {
+            return self::$epoch = trim($raw);
+        }
+        return $this->write_epoch();
+    }
+
+    private function write_epoch() {
+        $new = bin2hex(function_exists('random_bytes') ? random_bytes(8) : pack('NN', mt_rand(), mt_rand()));
+        $file = $this->epoch_file();
+        // Write to a neighbour and rename, so a reader never sees half a value.
+        $tmp = $file . '.' . getmypid();
+        if (@file_put_contents($tmp, $new, LOCK_EX) !== false && @rename($tmp, $file)) {
+            @chmod($file, 0644);
+            return self::$epoch = $new;
+        }
+        @unlink($tmp);
+        // Unwritable directory. Fall back to a fixed epoch so the cache still works; the
+        // cross-process flush is what is lost, and flush() reports that honestly.
+        return self::$epoch = '0000000000000000';
+    }
+
     public function __construct() {
+        $this->apcu = defined('SLIPSTREAM_OC_APCU') && SLIPSTREAM_OC_APCU;
         $this->multisite = function_exists('is_multisite') && is_multisite();
         $this->blog_prefix = $this->multisite ? (int) get_current_blog_id() : 0;
         $salt = defined('AUTH_KEY') ? AUTH_KEY : (defined('DB_NAME') ? DB_NAME : 'slip');
-        $this->prefix = 'slipoc:' . substr(md5($salt), 0, 8) . ':';
+        $this->site = 'slipoc:' . substr(md5($salt), 0, 8) . ':';
+        $this->prefix = $this->site . $this->epoch() . ':';
     }
 
     public function add_global_groups($groups) { foreach ((array) $groups as $g) { $this->global_groups[$g] = true; } }
@@ -71,12 +155,18 @@ class WP_Object_Cache {
         return $this->prefix . $blog . ':' . $group . ':' . $key;
     }
 
+    // A group is held in the request only when WordPress said so, or when there is no
+    // shared segment to hold it in.
+    private function runtime_only($group) {
+        return !$this->apcu || isset($this->non_persistent[$group]);
+    }
+
     public function add($key, $data, $group = 'default', $expire = 0) {
         if (wp_suspend_cache_addition()) { return false; }
         $id = $this->full_key($key, $group);
         if (isset($this->runtime[$id])) { return false; }
-        if (isset($this->non_persistent[$group])) { $this->runtime[$id] = $data; return true; }
-        // apcu_add is atomic set-if-absent — WordPress relies on this for
+        if ($this->runtime_only($group)) { $this->runtime[$id] = $data; return true; }
+        // apcu_add is atomic set-if-absent, and WordPress relies on that for
         // locks (e.g. doing_cron); a plain store would let two workers both
         // "acquire" the lock.
         if (apcu_add($id, is_object($data) ? clone $data : $data, max(0, (int) $expire))) {
@@ -95,7 +185,7 @@ class WP_Object_Cache {
         $id = $this->full_key($key, $group);
         if (is_object($data)) { $data = clone $data; }
         $this->runtime[$id] = $data;
-        if (isset($this->non_persistent[$group])) { return true; }
+        if ($this->runtime_only($group)) { return true; }
         return apcu_store($id, $data, max(0, (int) $expire));
     }
 
@@ -106,7 +196,7 @@ class WP_Object_Cache {
             $v = $this->runtime[$id];
             return is_object($v) ? clone $v : $v;
         }
-        if (isset($this->non_persistent[$group])) { $found = false; $this->cache_misses++; return false; }
+        if ($this->runtime_only($group)) { $found = false; $this->cache_misses++; return false; }
         $ok = false;
         $v = apcu_fetch($id, $ok);
         if ($ok) {
@@ -126,12 +216,16 @@ class WP_Object_Cache {
     public function delete($key, $group = 'default') {
         $id = $this->full_key($key, $group);
         unset($this->runtime[$id]);
-        if (isset($this->non_persistent[$group])) { return true; }
+        if ($this->runtime_only($group)) { return true; }
         return apcu_delete($id);
     }
 
     public function incr($key, $offset = 1, $group = 'default') {
         $id = $this->full_key($key, $group);
+        if ($this->runtime_only($group)) {
+            if (!array_key_exists($id, $this->runtime)) { return false; }
+            return $this->runtime[$id] = max(0, (int) $this->runtime[$id] + (int) $offset);
+        }
         $ok = false; $v = apcu_fetch($id, $ok);
         if (!$ok) { return false; }
         $v = max(0, (int) $v + (int) $offset);
@@ -142,22 +236,44 @@ class WP_Object_Cache {
     public function decr($key, $offset = 1, $group = 'default') { return $this->incr($key, -abs((int) $offset), $group); }
 
     public function flush() {
-        // Only clear THIS site's keys — apcu_clear_cache() would wipe every
-        // co-hosted site sharing this PHP-FPM master's APCu segment.
         $this->runtime = [];
-        if (class_exists('APCUIterator')) {
-            foreach (new APCUIterator('/^' . preg_quote($this->prefix, '/') . '/') as $item) {
-                apcu_delete($item['key']);
-            }
-            return true;
+
+        // Bumping the epoch is what makes this work across processes: PHP-FPM reads the same
+        // file and starts computing different keys on its very next request. Do it first,
+        // because it is the part that must not be skipped.
+        $new = $this->write_epoch();
+        $moved = ($new !== '0000000000000000');
+        if ($moved) {
+            $this->prefix = $this->site . $new . ':';
         }
-        return apcu_clear_cache();
+
+        // Then clear the keys we just orphaned, so a busy site does not carry two
+        // generations in the segment until they evict. Best effort: APCUIterator throws
+        // when the segment is not initialised, which is every CLI process.
+        if ($this->apcu && class_exists('APCUIterator')) {
+            try {
+                foreach (new APCUIterator('/^' . preg_quote($this->site, '/') . '/') as $item) {
+                    apcu_delete($item['key']);
+                }
+                return true;
+            } catch (Throwable $e) {
+                // fall through to the epoch result
+            }
+        }
+        return $moved;
     }
+
     public function flush_runtime() { $this->runtime = []; return true; }
+
     public function flush_group($group) {
         $prefix = $this->full_key('', $group);
-        foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $item) { apcu_delete($item['key']); }
         foreach (array_keys($this->runtime) as $k) { if (strpos($k, $prefix) === 0) { unset($this->runtime[$k]); } }
+        if (!$this->apcu || !class_exists('APCUIterator')) { return true; }
+        try {
+            foreach (new APCUIterator('/^' . preg_quote($prefix, '/') . '/') as $item) { apcu_delete($item['key']); }
+        } catch (Throwable $e) {
+            return false;
+        }
         return true;
     }
 

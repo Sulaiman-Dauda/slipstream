@@ -86,12 +86,25 @@ there is no socket round trip and no serialisation. Measured on a WooCommerce st
 made things *slower* — 4.13 req/s versus 4.56 with APCu. Redis remains available for when you
 genuinely have more than one application server.
 
-One thing to know: **wp-cli and PHP-FPM have separate APCu segments.** A cache flush from the
-command line cannot clear the web server's copy, and an FPM *reload* does not either — the master
-process survives and keeps its shared memory. Slipstream handles this by asking the site's own
-connector to flush through its FPM pool, which affects that site only. If you run wp-cli by hand
-and the site seems to ignore your change, that is why; the panel's own update, restore and
-migration paths do it correctly.
+**wp-cli and PHP-FPM have separate APCu segments**, and no amount of flushing from one reaches
+the other. An FPM *reload* does not clear it either: the master process survives and keeps its
+shared memory. Only a restart does.
+
+The drop-in works around that instead of living with it. Every key carries an epoch read from
+`shared/.slipstream-cache-epoch`, a file both processes can see. A flush writes a new epoch, so
+the next request in every process computes different keys and the old ones are unreachable.
+`wp cache flush` from the command line therefore takes effect on the web tier immediately, and so
+does anything else that flushes: activating a theme, changing an option, a restore.
+
+This used to be a real trap rather than a footnote. wp-cli runs with `apc.enable_cli=0`, so the
+segment is never initialised in that process, and the drop-in's guard against that case did
+nothing: PHP hoists top-level function and class declarations, so a bare `return` above them
+never stopped them being declared. On a wp-cli invocation `wp_cache_set()`, `wp_cache_add()`,
+`wp_cache_delete()` and `wp_cache_incr()` all returned false, `wp_cache_add()` could not take the
+lock WordPress uses it for, and `wp cache flush` died with "APC must be enabled to use
+APCUIterator". On a server with no APCu extension at all it was worse: the first cache write
+fatalled the site. The drop-in now detects the case and falls back to a request-scoped cache,
+which is what WordPress does natively.
 
 ## Cache warming
 
