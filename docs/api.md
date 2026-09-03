@@ -202,7 +202,7 @@ that site's database only, so cross-database access fails at the server.
 | `POST` | `/api/panel/certificate` | admin | install a certificate for the panel itself |
 | `POST` | `/api/panel/update` | admin | self-update, health-checked with automatic rollback |
 
-`POST /api/panel/update` takes `{"base_url": "https://…", "version": "v0.1.0"}`. `base_url` is the
+`POST /api/panel/update` takes `{"base_url": "https://…", "version": "v0.2.0"}`. `base_url` is the
 release root holding the binaries and their `.sha256` files; it must be `https://` and is required
 in practice. See [Operations](./operations.md#upgrades).
 

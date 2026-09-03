@@ -2,9 +2,9 @@
 
 ### Is this ready for production?
 
-It is a **release candidate**. It installs and runs cleanly on Ubuntu 24.04 and 26.04, with a
-43-check end-to-end suite green on both, and it has had one deliberate internal security pass. It
-has **not** had an external audit and is not yet carrying production traffic anywhere.
+It is a **release candidate**. It installs and runs cleanly on Ubuntu 24.04 and 26.04, with the
+end-to-end suite green on both, and it has had one deliberate internal security pass. It
+has **not** had an external audit. One real site has run on it, on a 1 GB server, since August.
 
 Run it on servers you can rebuild, keep backups off the box, and read
 [SECURITY.md](../SECURITY.md). If you need a panel with a decade of production behind it today, use
