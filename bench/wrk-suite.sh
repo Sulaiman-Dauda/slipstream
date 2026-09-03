@@ -21,11 +21,25 @@ if [ -z "$TARGET" ]; then
 fi
 
 PATH_CACHED=${PATH_CACHED:-/shop/}
-PATH_STATIC=${PATH_STATIC:-/wp-includes/css/dashicons.min.css}
+# A fixture of known size, not a WordPress file. Picking an asset out of
+# wp-includes makes the static number depend on whichever version shipped it:
+# dashicons.min.css is 59 KB, and at that size loopback saturates on bandwidth
+# long before the server runs out of capacity, so the result describes the link
+# rather than the panel. bench-static.txt is 1 KB, created by setup on both
+# stacks. See bench/README.md.
+PATH_STATIC=${PATH_STATIC:-/bench-static.txt}
 DURATION=${DURATION:-60s}
 SHORT=${SHORT:-30s}
 
 command -v wrk >/dev/null 2>&1 || { echo "wrk is not installed" >&2; exit 1; }
+
+# The flood scenario opens 2,000 connections. Under the default 1024 file
+# descriptors, roughly 987 of them fail to open and wrk reports them as connect
+# errors, which reads exactly like the server refusing load. It is the generator
+# hitting its own limit: raise it or the flood measures this script.
+# shellcheck disable=SC3045  # not in POSIX, but dash and bash both implement it,
+# and the fallback below covers a shell that does not.
+ulimit -n 65535 2>/dev/null || echo "warning: could not raise the fd limit; the flood result will measure it" >&2
 
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 out="$here/results/$LABEL"

@@ -246,11 +246,19 @@ if [ "$st" = active ]; then
   rm -rf "$FIX/wp-content/mu-plugins"
   echo "imported-by-e2e" > "$FIX/imported-marker.txt"
   tar czf "$MROOT/migration.tar.gz" -C "$FIX" .
-  sudo -u "$MU" wp --path="$MROOT/current" db export "$MROOT/migration.sql" --quiet 2>/dev/null
+  # The dump goes in shared/, not the site root: the root is root:site 0750, so
+  # the site user cannot write there and mariadb-dump fails with errcode 13. It
+  # failed silently here for as long as this check has existed, because stderr
+  # was discarded and the exit status never tested, so the import then ran
+  # against a file that was never created and three checks failed for one
+  # invisible reason.
+  if ! sudo -u "$MU" wp --path="$MROOT/current" db export "$MROOT/shared/migration.sql" --quiet; then
+    bad "migration fixture: could not export the database dump"
+  fi
   rm -rf "$FIX"
 
   mtask=$(c "$PANEL/api/sites/$MID/migration" -H 'Content-Type: application/json' \
-    -d "{\"archive\":\"migration.tar.gz\",\"sql\":\"migration.sql\",\"old_domain\":\"$MS\",\"confirm\":\"$MS\"}" | jqget "['task']['id']")
+    -d "{\"archive\":\"migration.tar.gz\",\"sql\":\"shared/migration.sql\",\"old_domain\":\"$MS\",\"confirm\":\"$MS\"}" | jqget "['task']['id']")
   check "migration import accepted" "$([ -n "$mtask" ] && echo yes || echo no)" "yes"
   check "migration import succeeds" "$(wait_task "${mtask:-0}" 240)" "succeeded"
 

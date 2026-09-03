@@ -74,4 +74,4 @@ jobs:
           fi
           shellcheck --version | sed -n '2p'
           # SC2086 (word splitting) is intentional in places; warnings only.
-          shellcheck --severity=error installer/install.sh scripts/*.sh
+          shellcheck --severity=error installer/install.sh scripts/*.sh bench/*.sh
