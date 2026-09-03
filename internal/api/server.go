@@ -32,8 +32,8 @@ type Server struct {
 	// updates caches the newest published release so opening the dashboard
 	// does not mean a request to GitHub every time.
 	updates updateCache
-	Agent AgentCaller
-	Log   *slog.Logger
+	Agent   AgentCaller
+	Log     *slog.Logger
 	// UI is the embedded frontend (may be nil in tests).
 	UI fs.FS
 	// InsecureCookies disables the Secure cookie flag for local development.
