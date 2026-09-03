@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -135,6 +137,43 @@ func firstField(s string) string {
 	return ""
 }
 
+// log falls back to the default logger when the agent was built without one,
+// which is the case in tests.
+func (a *Agent) log() *slog.Logger {
+	if a.Log != nil {
+		return a.Log
+	}
+	return slog.Default()
+}
+
+// defaultUpdateRepo is the repository whose signed build attestations the
+// binaries are checked against.
+const defaultUpdateRepo = "Sulaiman-Dauda/slipstream"
+
+// verifyProvenance checks each staged binary against the repository's signed
+// build attestations. Absence of the verifier is a refusal, not a pass, unless
+// the caller said otherwise.
+func (a *Agent) verifyProvenance(ctx context.Context, staged map[string]string, allowUnattested bool) error {
+	repo := defaultUpdateRepo
+	if _, err := exec.LookPath("gh"); err != nil {
+		if allowUnattested {
+			a.log().Warn("installing an update without verifying build provenance",
+				"reason", "no gh on this host", "repo", repo)
+			return nil
+		}
+		return fmt.Errorf("cannot verify build provenance: the GitHub CLI is not installed, " +
+			"so the update was refused. Install gh, or accept unverified binaries explicitly")
+	}
+	for bin, tmp := range staged {
+		if _, err := a.Runner.Run(ctx, "gh", "attestation", "verify", tmp, "--repo", repo); err != nil {
+			return fmt.Errorf("build provenance check failed for %s: these bytes were not "+
+				"produced by %s's release workflow, refusing the update: %w", bin, repo, err)
+		}
+	}
+	a.log().Info("build provenance verified", "repo", repo, "binaries", len(staged))
+	return nil
+}
+
 func (a *Agent) SelfUpdate(p rpc.SelfUpdateParams) (rpc.SelfUpdateResult, error) {
 	if p.BaseURL == "" {
 		return rpc.SelfUpdateResult{}, fmt.Errorf("update base URL required")
@@ -200,6 +239,24 @@ func (a *Agent) SelfUpdate(p rpc.SelfUpdateParams) (rpc.SelfUpdateResult, error)
 			return rpc.SelfUpdateResult{}, fmt.Errorf("%s is not a valid x86-64 executable — refusing update", bin)
 		}
 		staged[bin] = tmp
+	}
+
+	// Stage 1b: prove the bytes came from the project's release workflow, not
+	// merely from the release they were published in.
+	//
+	// The checksums above are published beside the binaries, so anyone who can
+	// write a release can replace both and the check still passes: a compromised
+	// account, a leaked token or a poisoned action reaches root on every server
+	// that updates. A provenance attestation is signed by GitHub's OIDC identity
+	// for this workflow at a specific commit and stored outside the release, so
+	// it cannot be forged by rewriting the release.
+	//
+	// This fails closed. A verification that runs and fails aborts the update
+	// always; a box with no GitHub CLI to verify with aborts unless the caller
+	// explicitly accepted that, which the panel records in the audit log.
+	if err := a.verifyProvenance(ctx, staged, p.AllowUnattested); err != nil {
+		cleanupStaged()
+		return rpc.SelfUpdateResult{}, err
 	}
 
 	// Stage 2: back up the live binaries so we can roll back, then swap.

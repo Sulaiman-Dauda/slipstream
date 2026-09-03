@@ -165,6 +165,9 @@ func (s *Server) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		BaseURL string `json:"base_url"`
 		Version string `json:"version"`
+		// Accepting binaries whose provenance could not be checked is a
+		// deliberate act, so it is asked for explicitly and recorded.
+		AllowUnattested bool `json:"allow_unattested"`
 	}
 	decode(r, &req)
 	if req.BaseURL == "" {
@@ -177,9 +180,13 @@ func (s *Server) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		// come from, so an admin session should not be able to repoint it.
 		req.BaseURL = defaultUpdateURL
 	}
-	s.Store.Audit(s.actor(r), "panel.update", req.Version, "")
+	detail := ""
+	if req.AllowUnattested {
+		detail = "provenance verification waived"
+	}
+	s.Store.Audit(s.actor(r), "panel.update", req.Version, detail)
 	var out rpc.SelfUpdateResult
-	if err := s.Agent.Call(rpc.MethodSelfUpdate, rpc.SelfUpdateParams{BaseURL: req.BaseURL, Version: req.Version}, &out); err != nil {
+	if err := s.Agent.Call(rpc.MethodSelfUpdate, rpc.SelfUpdateParams{BaseURL: req.BaseURL, Version: req.Version, AllowUnattested: req.AllowUnattested}, &out); err != nil {
 		respondErr(w, http.StatusBadGateway, err.Error())
 		return
 	}

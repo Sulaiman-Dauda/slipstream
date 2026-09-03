@@ -47,11 +47,30 @@ release root the installer uses. It **must** be `https://`, and it is required: 
 practice you pass `base_url` on each call. Add `"version"` to record which build you are moving to
 in the audit log.
 
-The self-update downloads the new binaries, verifies their checksums, confirms they are valid ELF
-executables, stages all of them before swapping any, backs up the current ones, then hands over to a
-detached systemd guard that health-checks `/healthz` and **automatically restores the previous
-binaries if the new build is unhealthy**. Tested by deliberately shipping a broken build: it rolled
-back to a working panel in about 27 seconds.
+The self-update downloads the new binaries, verifies their checksums, **checks their build
+provenance**, confirms they are valid ELF executables, stages all of them before swapping any, backs
+up the current ones, then hands over to a detached systemd guard that health-checks `/healthz` and
+**automatically restores the previous binaries if the new build is unhealthy**. Tested by
+deliberately shipping a broken build: it rolled back to a working panel in about 27 seconds.
+
+The provenance check is the one that matters if the release itself is the attack. Checksums are
+published beside the binaries, so anyone who can write a release can replace both and the checksum
+still passes: a compromised account, a leaked token or a poisoned action reaches root on every
+server that updates. A provenance attestation is signed by GitHub for this project's release
+workflow at a specific commit and stored outside the release, so rewriting the release cannot forge
+it.
+
+It **fails closed**. A check that runs and fails aborts the update, always. A server with no
+`gh` installed cannot check at all, and is refused unless the caller explicitly accepts that:
+
+```bash
+curl -sk -c jar -b jar https://your-panel/api/panel/update \
+  -H 'Content-Type: application/json' -d '{"allow_unattested": true}'
+```
+
+That waiver is recorded in the audit log. If you update unattended, install `gh` and leave the
+default: an automated update that skips the check is the single point at which a compromised
+release becomes root on your server, without anyone present to notice.
 
 Upgrading the OS packages underneath (nginx, PHP, MariaDB) is ordinary `apt` work. After a PHP
 upgrade, check that the version you use is still installed — Slipstream refuses to provision a site
