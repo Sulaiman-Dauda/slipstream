@@ -24,6 +24,36 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-03
+
+### Fixed
+
+- **A deploy silently turned the object cache off.** The drop-in is a symlink into `shared/`,
+  written once at provisioning, and nothing re-linked it into a new release directory, so the
+  first deploy after provisioning left the site with no object cache while the panel went on
+  reporting `object_cache: true`. Found on a live server where a site had been in that state
+  for two weeks; `wp cache flush` even reports success, because there is nothing to flush. A
+  deploy now makes the release agree with the site's recorded setting, in both directions, so
+  installs that already lost their drop-in repair themselves on the next deploy.
+- **Enabling the object cache started a Redis daemon that nothing used.** The endpoint called
+  `ensureRedis()` whenever it was asked to enable caching, but the request carries no backend
+  and the agent only selects Redis when explicitly told to, so every call installed the APCu
+  drop-in and the daemon sat there unused. On the 1 GB servers supported since 0.2.0 that is
+  real memory spent on nothing, and the progress message described work that was not happening.
+
+### Changed
+
+- The benchmark suite behind `docs/benchmarks.md` is now **in the repository** rather than
+  described by it: `bench/wrk-suite.sh` runs every published scenario, `bench/cpu-parity.sh`
+  is the hardware check the method depends on, and `bench/README.md` documents the one-box
+  A/B/A method actually used. The figures were re-measured against CloudPanel CE 2.5.4 on
+  3 September 2026 and now report the timeout count beside each percentile, because `wrk`
+  drops timed-out requests from the latency distribution and a panel that fails to answer
+  otherwise posts a better p99 than one that answered slowly.
+- The end-to-end suite is **55 checks**, verified green on both Ubuntu 24.04 and 26.04. Its
+  migration fixture had been writing a database dump into a directory the site user cannot
+  write to, with stderr discarded, so three checks failed for one invisible reason.
+
 ## [0.2.0] — 2026-09-03
 
 ### Added
