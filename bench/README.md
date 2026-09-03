@@ -38,8 +38,35 @@ Identical on both stacks, or the comparison is not about the panels:
   gave it a hand-written WordPress/WooCommerce VCL, Redis object cache and
   OPcache JIT.
 - Slipstream on shipped defaults
-- load generated from a **second machine in the same region**, never on the
-  target
+- load generated the same way for both stacks, and recorded as which way it was
+
+## Loopback or a second machine
+
+Run both, and label them. They answer different questions and neither is wrong.
+
+**Loopback** (wrk on the target) is what the published table uses. The generator
+competes with the server for the same cores, so the numbers understate the box,
+but both stacks carry an identical handicap and the network is removed as a
+variable entirely.
+
+**A second machine in the same region** removes the handicap and is closer to
+what a visitor experiences, at the cost of adding a network path to the
+measurement. The generator must be **bigger than the target**, or it becomes the
+bottleneck and you publish its limits as the target's.
+
+The gap is not small. Same target, same build, same afternoon, on a 2 vCPU box
+with a 4 vCPU generator:
+
+| Scenario | Loopback | From a 4 vCPU generator |
+| --- | --- | --- |
+| Cached sustained, 500 connections | 9,500 req/s | **12,707 req/s** (+34%) |
+| Static, 200 connections | 12,725 req/s | **17,722 req/s** (+39%) |
+| 2,000-connection flood | 8,178 req/s | **12,530 req/s** (+53%) |
+| Uncacheable | 5.49 req/s | 5.52 req/s (unchanged) |
+
+The uncacheable row is the tell: it is PHP-bound rather than network-bound, so it
+does not move. Everything the cache serves does. Compare loopback against
+loopback and network against network, never one against the other.
 
 ## Run
 
