@@ -11,8 +11,8 @@ promotion is refused.
 
 Slipstream runs on your own server. There is no hosted plan, no per-site fee and no phone-home.
 
-> **Status: release candidate.** It installs and runs cleanly on Ubuntu 24.04 and 26.04, and its
-> 55-check end-to-end suite was last run green on 24.04 (3 September 2026). Two client sites have run on it on a single 1 GB server since
+> **Status: release candidate.** It installs and runs cleanly on Ubuntu 24.04 and 26.04, with its
+> 55-check end-to-end suite green on both (3 September 2026). Two client sites have run on it on a single 1 GB server since
 > August, which is a start rather than a track record, and it has had no external security audit.
 > Run it on servers you can afford to rebuild, and read [SECURITY.md](./SECURITY.md) before
 > pointing it at anything that matters.
