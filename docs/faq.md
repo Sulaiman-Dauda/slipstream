@@ -69,9 +69,11 @@ no serialisation. Measured on a WooCommerce store, forcing Redis was *slower* â€
 
 ### Why is my WordPress change not showing up?
 
-Almost always a stale object cache after using wp-cli by hand. wp-cli and PHP-FPM have separate APCu
-segments, and an FPM *reload* does not clear it â€” restart PHP-FPM. The panel's own update, restore
-and migration paths handle this correctly. See [Troubleshooting](./troubleshooting.md).
+Almost always a stale object cache after using wp-cli by hand. wp-cli and PHP-FPM do hold separate
+APCu segments, but a flush crosses that boundary: every key carries an epoch from a file both
+processes read, and flushing writes a new one. Run `wp cache flush` in the release directory. The
+panel's own update, restore and migration paths flush through the connector and need nothing from
+you. See [Troubleshooting](./troubleshooting.md).
 
 ### How many sites can one server handle?
 
