@@ -2,8 +2,9 @@
 
 ### Is this ready for production?
 
-It is a **release candidate**. It installs and runs cleanly on Ubuntu 24.04 and 26.04, with the
-end-to-end suite green on both, and it has had one deliberate internal security pass. It
+It is a **release candidate**. It installs and runs cleanly on Ubuntu 24.04 and 26.04, and its
+55-check end-to-end suite was last run green on 24.04 (3 September 2026). It has had one
+deliberate internal security pass. It
 has **not** had an external audit. Two client sites have run on it, on a single 1 GB server,
 since August.
 
@@ -78,7 +79,7 @@ you. See [Troubleshooting](./troubleshooting.md).
 
 ### How many sites can one server handle?
 
-It depends entirely on traffic shape. Cached traffic is nearly free — 9,840 req/s on two cores — so
+It depends entirely on traffic shape. Cached traffic is nearly free, 9,280 req/s on two cores, so
 a dozen mostly-cached brochure sites on a 2 GB box is comfortable. One busy WooCommerce store with a
 lot of logged-in traffic can saturate the same box on its own, because carts and checkouts cannot be
 cached.

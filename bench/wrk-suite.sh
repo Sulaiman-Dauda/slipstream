@@ -59,15 +59,24 @@ run() {
 
 echo "== $LABEL against $TARGET =="
 
-run cached-sustained "$PATH_CACHED" -t4 -c500 -d"$DURATION"
-run cached-single    "$PATH_CACHED" -t1 -c1 -d"$SHORT"
-run cached-spike     "$PATH_CACHED" -t4 -c200 -d"$SHORT"
+# --timeout 10s on every latency-bearing scenario, deliberately. wrk drops a
+# request that exceeds its timeout from the latency distribution entirely, so a
+# server slow enough to blow the default 2s produces a BETTER looking p99 than
+# one that answered every request slowly. Measured here: a panel reporting a
+# 385.90ms p99 had dropped 319 requests, against 1 for a panel reporting 84.89ms.
+# The published p99 must describe the requests that were served, so let slow ones
+# complete and be counted, and read the error line alongside the percentile.
+LAT_TIMEOUT=${LAT_TIMEOUT:-10s}
+
+run cached-sustained "$PATH_CACHED" -t4 -c500 -d"$DURATION" --timeout "$LAT_TIMEOUT"
+run cached-single    "$PATH_CACHED" -t1 -c1 -d"$SHORT" --timeout "$LAT_TIMEOUT"
+run cached-spike     "$PATH_CACHED" -t4 -c200 -d"$SHORT" --timeout "$LAT_TIMEOUT"
 run flood            "$PATH_CACHED" -t8 -c2000 -d"$SHORT" --timeout 5s
-run static           "$PATH_STATIC" -t4 -c200 -d"$SHORT"
+run static           "$PATH_STATIC" -t4 -c200 -d"$SHORT" --timeout "$LAT_TIMEOUT"
 
 # Uncacheable: the Lua script gives every request a unique query string, so this
 # is the full PHP and database path rather than the cache.
-run uncached "$PATH_CACHED" -t2 -c10 -d"$SHORT" -s "$here/wrk/uncached.lua"
+run uncached "$PATH_CACHED" -t2 -c10 -d"$SHORT" --timeout "$LAT_TIMEOUT" -s "$here/wrk/uncached.lua"
 
 # One line per scenario: requests/sec, p50, p99 and any socket errors, which is
 # what the published table reports and what two runs get compared on.

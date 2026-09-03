@@ -11,8 +11,8 @@ promotion is refused.
 
 Slipstream runs on your own server. There is no hosted plan, no per-site fee and no phone-home.
 
-> **Status: release candidate.** It installs and runs cleanly on Ubuntu 24.04 and 26.04, with the
-> end-to-end suite green on both. Two client sites have run on it on a single 1 GB server since
+> **Status: release candidate.** It installs and runs cleanly on Ubuntu 24.04 and 26.04, and its
+> 55-check end-to-end suite was last run green on 24.04 (3 September 2026). Two client sites have run on it on a single 1 GB server since
 > August, which is a start rather than a track record, and it has had no external security audit.
 > Run it on servers you can afford to rebuild, and read [SECURITY.md](./SECURITY.md) before
 > pointing it at anything that matters.
@@ -29,18 +29,18 @@ Varnish, a hand-written WordPress VCL, Redis object cache and OPcache JIT):
 
 | | Slipstream | CloudPanel |
 | --- | --- | --- |
-| Cached throughput, sustained 500 connections | **9,840 req/s** | 2,495 req/s |
-| p99 latency under that load | **83 ms** | 6.46 s |
-| 2,000-connection flood | **8,051 req/s**, 0 errors | 163 req/s, 100 timeouts |
-| Static assets | **21,024 req/s** | 5,117 req/s |
-| Install time | **79 s** | 410 s |
-| Disk footprint | **+0.67 GB** | +4.44 GB |
-| Peak RAM under load | **823 MB, no swap** | 1,754 MB + 574 MB swap |
+| Cached throughput, sustained 500 connections | **9,280 req/s** | 2,259 req/s |
+| Requests completed in that minute | **570,864** | 135,661 |
+| p99 latency under that load | **85.5 ms**, 1 timeout | 385.9 ms, 319 timeouts |
+| 2,000-connection flood | **8,018 req/s**, no errors | 455 req/s, 1,619 timeouts |
+| Static assets, 1 KB | **12,636 req/s** | 2,767 req/s |
+| Install time | **105 s** | 460 s |
+| Disk footprint | **+0.61 GB** | +4.58 GB |
+| Peak RAM under load | **880 MB, no swap** | 1,315 MB, and it swapped |
 
-Where CloudPanel wins, honestly: **uncacheable dynamic rendering**. A WooCommerce product page
-that cannot be cached renders in ~189 ms here versus ~168 ms there. That gap is the measured cost
-of running every site inside an `open_basedir` jail (72 ms of a 301 ms render), which we keep on
-purpose.
+Where CloudPanel wins, honestly: **uncacheable dynamic rendering**, by 2× on loopback and 4× over
+a network (5.4 req/s against 22.0). That gap is the measured cost of running every site inside an
+`open_basedir` jail (72 ms of a 301 ms render), which we keep on purpose.
 
 Both panels' numbers, the method, and the two directives we tried and **rejected** because they
 measured worse are in [docs/benchmarks.md](./docs/benchmarks.md). The suite is in `bench/` and
