@@ -951,3 +951,16 @@ func TestSelfUpdateRefusesWhenProvenanceFails(t *testing.T) {
 		t.Fatal("a failed provenance check was waived; it must never be")
 	}
 }
+
+// The panel vhost is regenerated whenever its certificate is issued, so an
+// operator restricting access to the panel by IP cannot edit it directly. The
+// generated file must carry a hook to a file the panel does not own.
+func TestPanelVhostIncludesOperatorAccessRules(t *testing.T) {
+	src, err := os.ReadFile("panel.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "include /etc/slipstream/panel-access.conf*;") {
+		t.Fatal("the panel vhost has no hook for operator access rules, so an IP allowlist would be reverted the next time a panel certificate is issued")
+	}
+}
