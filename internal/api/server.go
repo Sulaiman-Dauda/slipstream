@@ -29,8 +29,11 @@ type AgentCaller interface {
 // Server owns the HTTP API.
 type Server struct {
 	Store *state.Store
-	Agent AgentCaller
-	Log   *slog.Logger
+	// updates caches the newest published release so opening the dashboard
+	// does not mean a request to GitHub every time.
+	updates updateCache
+	Agent   AgentCaller
+	Log     *slog.Logger
 	// UI is the embedded frontend (may be nil in tests).
 	UI fs.FS
 	// InsecureCookies disables the Secure cookie flag for local development.
@@ -174,6 +177,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/events", auth(s.handleEvents))
 
 	mux.HandleFunc("GET /api/system/status", auth(s.handleSystemStatus))
+	mux.HandleFunc("GET /api/system/update", auth(s.handleUpdateStatus))
 	mux.HandleFunc("GET /api/system/metrics", auth(s.handleSystemMetrics))
 	mux.HandleFunc("GET /api/system/drift", global(s.handleListDrift))
 	mux.HandleFunc("POST /api/system/drift/{id}/resolve", admin(s.handleResolveDrift))

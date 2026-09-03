@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { DriftEvent, MetricSample, Site, SystemStatus } from "../types";
+import { DriftEvent, MetricSample, Site, SystemStatus, UpdateStatus } from "../types";
 import { useAction, usePoll, useToast } from "../components/ui";
 import { Icon } from "../icons";
 import TaskFeed from "../components/TaskFeed";
@@ -45,6 +45,7 @@ export default function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [drift, setDrift] = useState<DriftEvent[]>([]);
   const [agentError, setAgentError] = useState("");
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const { data: services } = usePoll<ServiceInfo[]>("/api/services", 15000);
   const { data: sites } = usePoll<Site[]>("/api/sites", 15000);
   const { data: metrics } = usePoll<MetricSample[]>("/api/system/metrics", 60000);
@@ -55,6 +56,13 @@ export default function Dashboard() {
     api.get<SystemStatus>("/api/system/status").then((s) => { setStatus(s); setAgentError(""); })
       .catch((e) => setAgentError(e instanceof Error ? e.message : "agent unavailable"));
     api.get<DriftEvent[]>("/api/system/drift").then((d) => setDrift(d ?? [])).catch(() => undefined);
+  }, []);
+
+  // Asked for when someone opens the panel, never on a timer: the check is a
+  // request to a public URL that says nothing about this server, and it is the
+  // operator who decides to install anything.
+  useEffect(() => {
+    api.get<UpdateStatus>("/api/system/update").then(setUpdate).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -80,6 +88,28 @@ export default function Dashboard() {
 
       {toast.node}
       {agentError && <div className="error-box"><Icon.warning /> Agent unreachable: {agentError}</div>}
+
+      {update?.update_available && (
+        <div className="notice-box">
+          <Icon.download />
+          <span>
+            <strong>Slipstream {update.latest} is available.</strong> You are running {update.current}.
+          </span>
+          <span className="spacer" />
+          {update.notes_url && (
+            <a className="btn ghost" href={update.notes_url} target="_blank" rel="noreferrer">What&rsquo;s new</a>
+          )}
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() =>
+              run(() => api.post("/api/panel/update", { version: update.latest }), "Update started. The panel will restart.")
+            }
+          >
+            Update now
+          </button>
+        </div>
+      )}
 
       {status ? (
         <div className="grid cols-4 stagger">
