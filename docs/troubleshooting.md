@@ -88,19 +88,21 @@ Read the failed task's log. Common causes:
 
 ## A WordPress site returns 404 on real pages
 
-Usually a stale object cache. wp-cli and PHP-FPM have **separate APCu segments**, so a flush from
-the command line cannot clear the web server's copy — and an FPM *reload* does not either, because
-the master process survives and keeps its shared memory.
-
-If you changed something with wp-cli by hand:
+Usually a stale object cache. wp-cli and PHP-FPM do hold **separate APCu segments**, and neither
+can clear the other's memory directly, but that no longer means a restart. Every cache key carries
+an epoch read from a file both processes see, and a flush writes a new one, so the web tier starts
+computing different keys on its very next request:
 
 ```bash
-systemctl restart php8.4-fpm     # or php8.5-fpm on 26.04
+wp cache flush     # as the site user, in the release directory
 ```
 
-The panel's own update, restore and migration paths handle this correctly by asking the site's
-connector to flush through its own pool, which affects only that site. Doing it yourself is the case
-that bites.
+The panel's own update, restore and migration paths flush through the site's connector, so they
+cross the same boundary without touching anything else on the box.
+
+Restarting PHP-FPM also works and is what older versions of this page recommended. It is no longer
+necessary, and it is heavier than it looks: the pools are per site, but a `systemctl restart` of
+the service takes every site on the machine with it.
 
 Also check permalinks are flushed and the pages actually exist.
 
@@ -159,8 +161,9 @@ that changing `backup_password` does not re-encrypt old snapshots — they still
 ## A restore did not bring the site back
 
 Restores roll back automatically if a step fails, so a *failed* restore should leave the site as it
-was. If the restore succeeded but the site looks wrong, it is usually the object cache again —
-restart PHP-FPM.
+was. If the restore succeeded but the site looks wrong, the object cache is the usual suspect, and
+a restore already flushes it through the connector. Run `wp cache flush` in the release directory
+to rule it out.
 
 Verify the snapshot itself was good:
 
