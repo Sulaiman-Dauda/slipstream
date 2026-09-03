@@ -23,7 +23,7 @@ export default function Settings() {
   // GET returns read-only keys (panel_domain) alongside the editable ones, and
   // sending those straight back made every save fail. Submit only what the API
   // will accept.
-  const EDITABLE = ["acme_email", "backup_repository", "backup_password", "probe_target"];
+  const EDITABLE = ["acme_email", "backup_repository", "backup_password", "probe_target", "require_2fa_admin"];
   const saveSettings = (e: FormEvent) => {
     e.preventDefault();
     const payload: Record<string, string> = {};
@@ -79,6 +79,20 @@ export default function Settings() {
             <button disabled={busy}>Save</button>
             <button type="button" className="ghost" disabled={busy} onClick={() => run(async () => { const r = await api.post<{ snapshots: number }>("/api/backups/test"); toast.ok(`Repository reachable — ${r.snapshots} snapshot(s).`); })}>Test connection</button>
           </div>
+        </form>
+
+        <form className="card" onSubmit={saveSettings}>
+          <div className="card-head"><span className="card-ico"><Icon.lock /></span><h3 style={{ margin: 0 }}>Access</h3></div>
+          <label>
+            <input
+              type="checkbox"
+              checked={settings.require_2fa_admin === "1"}
+              onChange={(e) => setSettings((v) => ({ ...v, require_2fa_admin: e.target.checked ? "1" : "" }))}
+            />{" "}
+            Require two-factor authentication on admin accounts
+          </label>
+          <p className="note tiny">An admin can do anything root can do on this server. With this on, an admin without a second factor can reach only their own security settings until they enrol, so it cannot lock anyone out.</p>
+          <button className="mt" disabled={busy}>Save</button>
         </form>
 
         <form className="card" onSubmit={saveSettings}>

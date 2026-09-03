@@ -847,3 +847,35 @@ func TestSelfUpdateDefaultsToProjectReleases(t *testing.T) {
 		t.Fatal("no update was attempted")
 	}
 }
+
+// An admin is effectively root on the machine, so the panel can require a second
+// factor on those accounts. The requirement must not lock anyone out: the routes
+// needed to enrol have to stay reachable, or turning it on strands every admin
+// outside the panel that would let them satisfy it.
+func TestRequire2FAForAdmins(t *testing.T) {
+	s, _, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+
+	if resp, _ := c.do("GET", "/api/sites", nil); resp.StatusCode != http.StatusOK {
+		t.Fatal("precondition: an admin without TOTP should work while the setting is off")
+	}
+
+	if resp, body := c.do("PUT", "/api/settings", map[string]string{"require_2fa_admin": "1"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("enabling the requirement = %d %s", resp.StatusCode, body)
+	}
+
+	resp, body := c.do("GET", "/api/sites", nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("an admin with no second factor still had full access: %d %s", resp.StatusCode, body)
+	}
+
+	// The way out has to stay open.
+	for _, path := range []string{"/api/me"} {
+		if resp, body := c.do("GET", path, nil); resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s = %d %s, want reachable so the admin can enrol", path, resp.StatusCode, body)
+		}
+	}
+	if resp, body := c.do("POST", "/api/account/2fa/begin", map[string]string{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("2fa enrolment = %d %s, want reachable: the requirement would otherwise lock every admin out", resp.StatusCode, body)
+	}
+}
