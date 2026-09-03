@@ -410,6 +410,19 @@ label .hint { font-weight: 430; color: var(--text-3); font-size: 12.5px; margin-
 .ok-box { background: var(--good-soft); border: 1px solid color-mix(in srgb, var(--good) 30%, transparent); color: var(--good); }
 .info-box { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
 .error-box svg, .ok-box svg, .info-box svg { flex: none; margin-top: 1px; }
+
+/* An available update: the same box as .info-box, laid out as a row because it
+   carries actions rather than only text. */
+.notice-box {
+  border-radius: var(--r-sm); padding: 11px 14px; margin-top: var(--sp-4); font-size: 13.5px;
+  display: flex; gap: 10px; align-items: center; line-height: 1.5;
+  background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  color: var(--text-2);
+}
+.notice-box svg { flex: none; color: var(--accent-mid); }
+.notice-box strong { color: var(--text); }
+.notice-box .spacer { flex: 1 1 auto; }
+.notice-box .btn { padding: 6px 12px; font-size: 13px; }
 .badge svg { width: 11px; height: 11px; flex: none; }
 
 /* ---- Tasks / activity ------------------------------------------------------ */

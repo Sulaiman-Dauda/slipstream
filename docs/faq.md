@@ -69,6 +69,19 @@ On a single server APCu is faster: it lives in the PHP process, so there is no s
 no serialisation. Measured on a WooCommerce store, forcing Redis was *slower* — 4.13 req/s versus
 4.56 with APCu. Redis is available for when you genuinely have more than one application server.
 
+### Does the panel phone home?
+
+No. Nothing about your server, your sites or your usage is sent anywhere.
+
+There is one outbound request and it is worth describing exactly. When you open the dashboard, the
+panel asks GitHub which release is newest, so it can tell you an update exists and link to what
+changed. It is an unauthenticated GET of a public URL, it carries no identifier, no site list and no
+version of anything except what your browser normally sends, and it happens when someone is looking
+at the panel rather than on a schedule. The answer is cached for six hours.
+
+Turn it off by setting `update_check` to `0`, and the panel simply stops asking. Updates are always
+manual either way: Slipstream never installs anything on its own.
+
 ### Why is my WordPress change not showing up?
 
 Almost always a stale object cache after using wp-cli by hand. wp-cli and PHP-FPM do hold separate
