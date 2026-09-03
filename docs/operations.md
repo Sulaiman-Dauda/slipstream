@@ -35,6 +35,11 @@ Deleting a site removes its log directory too.
 
 ## Upgrades
 
+The panel tells you when a newer release exists: open the dashboard and a banner names the version,
+links to [the changelog](https://slipstreampanel.com/changelog) and offers an **Update now** button.
+Nothing installs by itself, and the check is described in the FAQ under "Does the panel phone home?".
+
+
 ```bash
 curl -sk -c jar -b jar https://your-panel/api/panel/update \
   -H 'Content-Type: application/json' \

@@ -165,3 +165,13 @@ export interface PanelUser {
   totp_enabled: boolean;
   created_at: string;
 }
+
+export interface UpdateStatus {
+  current: string;
+  latest?: string;
+  update_available: boolean;
+  notes_url?: string;
+  checked_at?: string;
+  check_enabled: boolean;
+  error?: string;
+}

@@ -879,3 +879,63 @@ func TestRequire2FAForAdmins(t *testing.T) {
 		t.Fatalf("2fa enrolment = %d %s, want reachable: the requirement would otherwise lock every admin out", resp.StatusCode, body)
 	}
 }
+
+func TestVersionComparison(t *testing.T) {
+	for _, tc := range []struct {
+		candidate, current string
+		want               bool
+	}{
+		{"v0.2.2", "v0.2.1", true},
+		{"v0.2.1", "v0.2.1", false},
+		{"v0.2.0", "v0.2.1", false},
+		{"v0.2.10", "v0.2.9", true}, // the one a string compare gets wrong
+		{"v0.3.0", "v0.2.99", true},
+		{"v1.0.0", "v0.9.9", true},
+		{"v0.2.2", "dev", false},               // a dev build must never be nagged
+		{"v0.2.2", "v0.1.2-14-g96d73a3", true}, // a source build reports like this
+	} {
+		if got := newerThan(tc.candidate, tc.current); got != tc.want {
+			t.Errorf("newerThan(%q, %q) = %v, want %v", tc.candidate, tc.current, got, tc.want)
+		}
+	}
+}
+
+func TestUpdateCheckCanBeTurnedOff(t *testing.T) {
+	s, _, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+
+	if resp, body := c.do("PUT", "/api/settings", map[string]string{"update_check": "0"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("disabling the check = %d %s", resp.StatusCode, body)
+	}
+	resp, body := c.do("GET", "/api/system/update", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d %s", resp.StatusCode, body)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["check_enabled"] != false {
+		t.Error("the check reported itself enabled after being turned off")
+	}
+	if out["latest"] != nil {
+		t.Error("a disabled check still reached out for the latest release")
+	}
+}
+
+// The "What's new" link points at a heading on slipstreampanel.com/changelog,
+// which is generated from CHANGELOG.md in this repo by the website's sync
+// script. The two live in different repositories, so nothing but this test
+// stops the anchor drifting and the link quietly landing at the top of the page.
+// Verified against the rendered page: "## v0.2.1" becomes id="v021".
+func TestChangelogAnchorMatchesTheRenderedPage(t *testing.T) {
+	for tag, want := range map[string]string{
+		"v0.2.1":  "v021",
+		"v0.2.10": "v0210",
+		"v1.0.0":  "v100",
+	} {
+		if got := anchorFor(tag); got != want {
+			t.Errorf("anchorFor(%q) = %q, want %q", tag, got, want)
+		}
+	}
+}
