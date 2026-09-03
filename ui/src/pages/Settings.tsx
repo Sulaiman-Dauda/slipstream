@@ -20,9 +20,15 @@ export default function Settings() {
 
   useEffect(() => { loadSettings(); }, []);
 
+  // GET returns read-only keys (panel_domain) alongside the editable ones, and
+  // sending those straight back made every save fail. Submit only what the API
+  // will accept.
+  const EDITABLE = ["acme_email", "backup_repository", "backup_password", "probe_target"];
   const saveSettings = (e: FormEvent) => {
     e.preventDefault();
-    run(async () => setSettings(await api.put<Record<string, string>>("/api/settings", settings)), "Settings saved");
+    const payload: Record<string, string> = {};
+    for (const k of EDITABLE) if (settings[k] !== undefined) payload[k] = settings[k];
+    run(async () => setSettings(await api.put<Record<string, string>>("/api/settings", payload)), "Settings saved");
   };
   const bind = (key: string) => ({ value: settings[key] ?? "", onChange: (e: React.ChangeEvent<HTMLInputElement>) => setSettings((s) => ({ ...s, [key]: e.target.value })) });
 
@@ -86,9 +92,7 @@ export default function Settings() {
         <div className="card">
           <div className="card-head"><span className="card-ico"><Icon.download /></span><h3 style={{ margin: 0 }}>Panel updates</h3></div>
           <p className="note">Download and install the latest signed Slipstream binaries, then restart.</p>
-          <label>Update URL <span className="hint">optional override</span></label>
-          <input {...bind("update_url")} placeholder="https://releases.slipstream…/1.1.0" />
-          <button className="ghost mt" disabled={busy} onClick={() => run(() => api.post("/api/panel/update", { base_url: settings.update_url }), "Update started")}><Icon.refresh /> Check & update</button>
+          <button className="ghost mt" disabled={busy} onClick={() => run(() => api.post("/api/panel/update", {}), "Update started")}><Icon.refresh /> Update now</button>
         </div>
       </div>
     </>

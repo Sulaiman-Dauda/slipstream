@@ -800,3 +800,50 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Errorf("stored password = %q", stored)
 	}
 }
+
+// The settings page loads settings and saves them back. GET returns read-only
+// keys alongside editable ones, and rejecting that round-trip broke every save
+// through the UI, on a form nobody had edited.
+func TestSettingsRoundTripSaves(t *testing.T) {
+	s, _, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+
+	resp, body := c.do("GET", "/api/settings", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get settings = %d %s", resp.StatusCode, body)
+	}
+	var loaded map[string]string
+	if err := json.Unmarshal([]byte(body), &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded["panel_domain"]; !ok {
+		t.Fatal("expected the read-only panel_domain in the response the UI stores")
+	}
+
+	resp, body = c.do("PUT", "/api/settings", loaded)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("saving unchanged settings = %d %s, want 200", resp.StatusCode, body)
+	}
+
+	// Actually trying to change it is still refused, with the reason.
+	loaded["panel_domain"] = "panel.example.com"
+	resp, body = c.do("PUT", "/api/settings", loaded)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("changing a read-only setting = %d %s, want 400", resp.StatusCode, body)
+	}
+}
+
+// The update button sends no source; without a default the panel answered
+// "no update URL configured" and could not update itself at all.
+func TestSelfUpdateDefaultsToProjectReleases(t *testing.T) {
+	s, agent, ts := testServer(t)
+	c := setupAdmin(t, s, ts)
+
+	resp, body := c.do("POST", "/api/panel/update", map[string]string{})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update with no source = %d %s", resp.StatusCode, body)
+	}
+	if !agent.called(rpc.MethodSelfUpdate) {
+		t.Fatal("no update was attempted")
+	}
+}

@@ -209,8 +209,19 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "malformed request")
 		return
 	}
-	for key := range req {
+	// GET returns the read-only keys too, so the settings page holds them in the
+	// object it sends back on save. Rejecting the round-trip made Save fail with
+	// "panel_domain is set by the operation that owns it" on a form nobody had
+	// edited, which is every settings change through the UI since panel_domain
+	// became readable. A submitted value equal to the stored one is not an
+	// attempt to change anything: drop it and carry on. An actual attempt still
+	// gets the explanation.
+	for key, value := range req {
 		if readOnlySettings[key] {
+			if cur, _ := s.Store.GetSetting(key, ""); cur == value {
+				delete(req, key)
+				continue
+			}
 			respondErr(w, http.StatusBadRequest, key+" is set by the operation that owns it, not here")
 			return
 		}
