@@ -11,8 +11,9 @@ and inventing them would be dishonest. Order is roughly priority.
 The blockers are about confidence, not features.
 
 - **Production traffic.** Slipstream runs correctly on both supported Ubuntu
-  releases with a 43-check suite green on each, but it is not yet carrying
-  anyone's real traffic. That is the single biggest gap between "works" and
+  releases with the end-to-end suite green on each, and has served one real site
+  on a 1 GB server since August 2026. One site for a few months is a start, not a
+  track record, and this stays the single biggest gap between "works" and
   "trustworthy".
 - **An external security review.** There has been one deliberate internal pass
   (see [SECURITY.md](./SECURITY.md)); no independent eyes. A control panel that

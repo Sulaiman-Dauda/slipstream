@@ -43,7 +43,7 @@ To pin a specific version rather than tracking the newest release, set `SLIPSTRE
 tag:
 
 ```bash
-curl -fsSL https://get.slipstreampanel.com/v0.1.0 | sudo SLIPSTREAM_VERSION=v0.1.0 bash
+curl -fsSL https://get.slipstreampanel.com/v0.2.0 | sudo SLIPSTREAM_VERSION=v0.2.0 bash
 ```
 
 Both halves matter: the path pins the **installer script**, and `SLIPSTREAM_VERSION` pins the

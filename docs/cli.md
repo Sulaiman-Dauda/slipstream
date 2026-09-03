@@ -150,6 +150,11 @@ slipctl settings set <key> <value>
 These four are the only settings the API will write; `slipctl settings get` masks
 `backup_password` to a presence indicator rather than returning it.
 
+`settings get` also returns **`panel_domain`**, which is read-only: it records the domain the
+panel's own certificate was issued for, and is set by that operation rather than typed. Writing it
+is rejected, because a panel that could claim a domain it holds no certificate for would be lying
+about its own address. Change it by issuing a panel certificate for the new domain.
+
 `probe_target` exists because Safe Push measures the site over HTTP with the site's `Host` header.
 The default hits the loopback interface so measurement never leaves the machine — change it only if
 the panel must probe through something else.
