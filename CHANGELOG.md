@@ -24,6 +24,52 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-03
+
+### Added
+
+- **`panel-api recover-admin`.** Losing the panel password meant losing the panel: no reset,
+  and the only password endpoint needed a session you could not get. Run from the host, it
+  lists accounts, resets one, creates the first admin when none exists, and clears 2FA only
+  when asked. The password is generated and printed once rather than accepted as an argument,
+  a reset revokes that account's sessions, and every use writes an audit event.
+- **1 GB servers are supported.** Preflight refused anything under 1500 MB and the docs asked
+  for 2 GB, which undersold the lighter stack the README compares against CloudPanel.
+
+### Fixed
+
+- **The object cache drop-in installed itself over a segment it could not reach.** The guard at
+  the top of `object-cache.php` was a bare `return` above the function and class declarations,
+  and PHP hoists those, so it never prevented anything. Under `apc.enable_cli=0` every wp-cli
+  cache call returned false, `wp cache flush` died, and on a server with no APCu extension the
+  first cache write fatalled the site. When APCu is unusable the drop-in now behaves like
+  WordPress's own request-scoped cache.
+- **A flush from wp-cli did not reach PHP-FPM.** The two hold separate APCu segments, so a theme
+  activated from the command line kept serving the old one until PHP-FPM restarted. Keys now
+  carry an epoch from a file both processes read, and a flush writes a new one.
+- **A deploy dropped the cache connector, and drift could not see it.** `installConnector` ran at
+  provisioning and on import but never on `DeployRelease`, so a build artefact from CI promoted a
+  release with no mu-plugin in it.
+- **An imported site dropped the cache connector**, for the same reason: the archive carries the
+  source host's `wp-content`, which has no connector in it.
+- **Block theme edits served stale pages.** Changing a header, footer, template, global style or
+  navigation in the Site Editor left every interior page on the old version until its TTL expired,
+  up to 24 hours on the Maximum profile. Those changes now purge the whole site.
+- **Guard measured the box rather than the change**, which undercut the promise a promotion is
+  gated on. The site budget is now divided per site and migration is covered.
+- **Password changes and the panel domain gave no feedback.** The panel did the work and did not
+  say so, so a saved domain looked like it had failed.
+- **The panel silently fell back to a system font.** Vite inlined a 2,028 byte JetBrains Mono
+  subset as a `data:` URI, under its 4 kB limit, and the API's own `font-src 'self'` rejected it.
+- CSS side-effect imports now typecheck, via Vite's client types.
+
+### Changed
+
+- ShellCheck comes from the runner instead of apt. One CI run sat in `apt-get install` for over
+  two hours on 19/08 and had to be cancelled by hand, blocking a dependency PR that was green.
+- Dependencies: React 19.2.8, react-router-dom 7, TypeScript 7, Vite 8, `@vitejs/plugin-react` 6,
+  `golang.org/x/crypto` 0.55.0, `modernc.org/sqlite` 1.56.0.
+
 ## [0.1.2] — 2026-07-26
 
 ### Added
