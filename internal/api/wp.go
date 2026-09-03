@@ -103,10 +103,13 @@ func (s *Server) handleWPObjectCache(w http.ResponseWriter, r *http.Request) {
 	}
 	task, err := s.runTask("wp.object_cache", site.ID, func(progress func(int, string)) error {
 		if req.Enable {
-			progress(30, "Enabling Redis object cache (installing Redis if needed)")
-			if err := s.ensureRedis(); err != nil {
-				return err
-			}
+			// APCu, not Redis. This request carries no backend and the agent
+			// selects Redis only when WPParams.What is "redis", which nothing
+			// sets, so every call lands on the APCu drop-in. Starting Redis
+			// here spent a resident daemon on a backend that never gets used,
+			// on machines as small as the 1 GB servers this panel supports,
+			// and told the operator it was doing something it was not.
+			progress(30, "Installing the APCu object-cache drop-in")
 		}
 		if err := s.Agent.Call(rpc.MethodWPObjectCache, rpc.WPParams{Site: site, Enable: req.Enable}, nil); err != nil {
 			return err
@@ -122,14 +125,6 @@ func (s *Server) handleWPObjectCache(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(s.actor(r), "wp.object_cache", site.Domain, "")
 	respond(w, http.StatusAccepted, map[string]any{"task": task})
-}
-
-// ensureRedis starts Redis on demand the first time a site needs object
-// caching (the installer leaves it disabled to stay lean).
-func (s *Server) ensureRedis() error {
-	var out map[string]string
-	// RestartService both starts and enables via systemd restart semantics.
-	return s.Agent.Call(rpc.MethodRestartService, rpc.ServiceParams{Name: "redis"}, &out)
 }
 
 // handleCacheStats reports object-cache effectiveness for a site.
