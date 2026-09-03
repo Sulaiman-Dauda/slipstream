@@ -134,6 +134,45 @@ func dropinPath(site state.Site) string {
 	return filepath.Join(site.RootPath, "current", "wp-content", "object-cache.php")
 }
 
+// linkSharedDropin makes a release directory agree with the site's recorded
+// object-cache setting: linked to the shared drop-in when it is on, and with no
+// drop-in at all when it is off.
+//
+// It exists because the drop-in was written once at provisioning and never
+// again. wp-config.php is re-linked into every new release; the drop-in was
+// not, so the first deploy after provisioning left the site running with no
+// object cache while the panel went on reporting object_cache: true. Found on a
+// live server where a site had been in that state for two weeks.
+//
+// Only the APCu backend is handled here. The Redis drop-in is written into the
+// release by the redis-cache plugin rather than shared/, and the API cannot
+// currently select that backend at all (see #45).
+func linkSharedDropin(releaseDir string, site state.Site, runner Runner) error {
+	dropin := filepath.Join(releaseDir, "wp-content", "object-cache.php")
+	shared := filepath.Join(site.RootPath, "shared", "object-cache.php")
+
+	if !site.Config.ObjectCache {
+		// Off is a state to enforce, not just a thing we skip: a release copied
+		// from a tree that had one would otherwise silently switch it back on.
+		os.Remove(dropin)
+		return nil
+	}
+	if _, err := os.Stat(shared); err != nil {
+		return nil // nothing to link to; provisioning writes it
+	}
+	if _, err := os.Stat(filepath.Dir(dropin)); err != nil {
+		return nil // no wp-content in this release
+	}
+	os.Remove(dropin)
+	if err := forceSymlink(shared, dropin); err != nil {
+		return err
+	}
+	if runner != nil {
+		runner.Run(context.Background(), "chown", "-h", site.SystemUser+":"+site.SystemUser, dropin)
+	}
+	return nil
+}
+
 // WPObjectCache enables or disables persistent object caching. The backend
 // is chosen by topology: single server uses the APCu drop-in (in-process,
 // no daemon); Redis is used when p.What == "redis" (scale mode / explicit).
@@ -172,11 +211,11 @@ func (a *Agent) WPObjectCache(p rpc.WPParams) (map[string]string, error) {
 	if err := os.WriteFile(shared, []byte(APCuDropin), 0o640); err != nil {
 		return nil, fmt.Errorf("write drop-in: %w", err)
 	}
-	os.Remove(dropin)
-	if err := forceSymlink(shared, dropin); err != nil {
+	site := p.Site
+	site.Config.ObjectCache = true
+	if err := linkSharedDropin(filepath.Join(p.Site.RootPath, "current"), site, a.Runner); err != nil {
 		return nil, err
 	}
-	a.Runner.Run(ctx, "chown", "-h", p.Site.SystemUser+":"+p.Site.SystemUser, dropin)
 	a.Runner.Run(ctx, "chown", p.Site.SystemUser+":"+p.Site.SystemUser, shared)
 	// Reload FPM so OPcache picks up the new/removed drop-in immediately —
 	// otherwise a stale cached object-cache.php can fatal the site.
