@@ -90,6 +90,13 @@ func (a *Agent) DeployRelease(p rpc.DeployParams) (rpc.DeployResult, error) {
 		if err := installConnector(releaseDir); err != nil {
 			return fail(fmt.Errorf("install cache connector: %w", err))
 		}
+		// The object-cache drop-in is a symlink into shared/, and a new release
+		// directory does not have it. Re-link it here for the same reason
+		// wp-config.php is re-linked above: otherwise the first deploy after
+		// provisioning quietly turns the object cache off and nothing says so.
+		if err := linkSharedDropin(releaseDir, site, a.Runner); err != nil {
+			return fail(fmt.Errorf("link object-cache drop-in: %w", err))
+		}
 		sum := sha256.Sum256([]byte(ConnectorPHP))
 		managed = append(managed, rpc.ManagedFile{
 			Path:   filepath.Join(site.RootPath, "current", "wp-content", "mu-plugins", "slipstream-connector.php"),

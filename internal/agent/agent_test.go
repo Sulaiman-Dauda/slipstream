@@ -803,6 +803,78 @@ func TestConnectorPurgesSiteWideForBlockThemeObjects(t *testing.T) {
 // contains no mu-plugins, so without an explicit reinstall the promoted
 // release has no connector: the site serves 200, nginx still caches, nothing
 // is logged, and no purge ever fires again.
+// A deploy must leave the release agreeing with the site's recorded object-cache
+// setting. The drop-in is a symlink into shared/, and a fresh release directory
+// has no such link, so before this it was dropped on the first deploy after
+// provisioning while the panel went on reporting the cache as enabled. Found on
+// a live server, where a site had been running without one for two weeks.
+func TestDeployReleaseKeepsObjectCacheDropinInStep(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		seed    bool // a drop-in already in the source tree
+		want    bool
+	}{
+		{"enabled is re-linked into the new release", true, false, true},
+		{"enabled survives when the source has one too", true, true, true},
+		{"disabled is removed even if the source carried one", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "build")
+			if err := os.MkdirAll(filepath.Join(source, "wp-content"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.seed {
+				if err := os.WriteFile(filepath.Join(source, "wp-content", "object-cache.php"), []byte("<?php // stale\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			a := &Agent{Runner: &mockRunner{}, Paths: Paths{SitesRoot: root}}
+			site := state.Site{
+				Domain: "x.com", Type: state.SiteWordPress, SystemUser: "slip-site-9",
+				RootPath: filepath.Join(root, "x.com"),
+			}
+			site.Config.ObjectCache = tc.enabled
+			if err := os.MkdirAll(filepath.Join(site.RootPath, "releases"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			// Provisioning writes the drop-in to shared/; that part already worked.
+			if err := os.MkdirAll(filepath.Join(site.RootPath, "shared"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			shared := filepath.Join(site.RootPath, "shared", "object-cache.php")
+			if err := os.WriteFile(shared, []byte(APCuDropin), 0o640); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := a.DeployRelease(rpc.DeployParams{Site: site, SourceDir: source, ReleaseID: "20260820-101010"}); err != nil {
+				t.Fatalf("deploy: %v", err)
+			}
+
+			dropin := filepath.Join(site.RootPath, "releases", "20260820-101010", "wp-content", "object-cache.php")
+			fi, err := os.Lstat(dropin)
+			switch {
+			case tc.want && err != nil:
+				t.Fatal("the deployed release has no object-cache drop-in, so the site is running without the cache the panel says it has")
+			case !tc.want && err == nil:
+				t.Fatal("object cache is off for this site, but the deploy left a drop-in in the release")
+			}
+			if !tc.want {
+				return
+			}
+			if fi.Mode()&os.ModeSymlink == 0 {
+				t.Fatal("the drop-in should be a symlink into shared/, or the next deploy silently forks it")
+			}
+			target, err := os.Readlink(dropin)
+			if err != nil || target != shared {
+				t.Fatalf("drop-in points at %q, want the shared copy at %q", target, shared)
+			}
+		})
+	}
+}
+
 func TestDeployReleaseInstallsConnectorForWordPress(t *testing.T) {
 	for _, tc := range []struct {
 		typ  state.SiteType
