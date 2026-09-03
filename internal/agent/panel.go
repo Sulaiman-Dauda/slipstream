@@ -48,6 +48,11 @@ server {
     ssl_certificate /etc/slipstream/certs/panel.pem;
     ssl_certificate_key /etc/slipstream/certs/panel.key;
     add_header Strict-Transport-Security "max-age=31536000" always;
+    # Operator-owned access rules, kept in a separate file because this vhost is
+    # managed: it is rewritten whenever the panel certificate is issued, so any
+    # allow/deny written here directly would be silently reverted. The wildcard
+    # means nginx starts fine when no such file exists, which is the default.
+    include /etc/slipstream/panel-access.conf*;
     location / {
         proxy_pass https://127.0.0.1:%d;
         proxy_ssl_verify off;

@@ -120,6 +120,21 @@ configuration file.
 Stated plainly so you can decide for yourself:
 
 - **No external audit yet.** The most important limitation.
+- **The panel can be restricted to known addresses.** It answers on 443 for its own domain, and
+  rate limiting is otherwise the only thing between a public panel and credential stuffing. A
+  firewall rule cannot do this, because the sites share port 443: scope it in nginx instead, by
+  writing `/etc/slipstream/panel-access.conf`:
+
+  ```nginx
+  allow 203.0.113.4;      # the address you administer from
+  allow 10.8.0.0/24;      # or a VPN subnet
+  deny all;
+  ```
+
+  Then `nginx -t && systemctl reload nginx`. The panel's own vhost includes that file if it
+  exists, and is regenerated whenever the panel certificate is issued, which is exactly why the
+  rules live in a file the panel does not own. Lock yourself out and the fix is on the server:
+  delete the file and reload.
 - **Two-factor authentication can be required on admin accounts.** Set `require_2fa_admin` (a
   checkbox on the settings page). While it is on, an admin with no second factor can reach only
   their own account and the enrolment routes, so turning it on cannot lock anyone out of the panel
