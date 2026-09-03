@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -913,5 +914,40 @@ func TestDeployReleaseInstallsConnectorForWordPress(t *testing.T) {
 				t.Errorf("%s is not WordPress and should not get a connector", tc.typ)
 			}
 		})
+	}
+}
+
+// The checksums are published in the same release as the binaries, so anyone who
+// can write that release can replace both. Provenance is what makes the update
+// trustworthy, and it has to fail closed: a box that cannot check is a box that
+// does not install.
+func TestSelfUpdateRefusesWhenProvenanceCannotBeChecked(t *testing.T) {
+	a := &Agent{Runner: &mockRunner{}, Paths: Paths{}}
+	staged := map[string]string{"panel-api": "/tmp/panel-api"}
+
+	// No verifier on this host, and nobody said to proceed anyway.
+	t.Setenv("PATH", t.TempDir())
+	if err := a.verifyProvenance(context.Background(), staged, false); err == nil {
+		t.Fatal("an update installed root binaries without checking where they came from")
+	}
+	// The same box, with the operator explicitly accepting that.
+	if err := a.verifyProvenance(context.Background(), staged, true); err != nil {
+		t.Fatalf("explicit waiver should proceed: %v", err)
+	}
+}
+
+// A verifier that runs and rejects the bytes is never waived.
+func TestSelfUpdateRefusesWhenProvenanceFails(t *testing.T) {
+	dir := t.TempDir()
+	gh := filepath.Join(dir, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	a := &Agent{Runner: &mockRunner{fail: map[string]error{"gh": fmt.Errorf("no attestation found")}}, Paths: Paths{}}
+	err := a.verifyProvenance(context.Background(), map[string]string{"panel-api": "/tmp/panel-api"}, true)
+	if err == nil {
+		t.Fatal("a failed provenance check was waived; it must never be")
 	}
 }

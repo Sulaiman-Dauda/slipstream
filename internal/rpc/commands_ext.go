@@ -304,6 +304,9 @@ type PanelCertParams struct {
 type SelfUpdateParams struct {
 	BaseURL string `json:"base_url"`
 	Version string `json:"version"`
+	// AllowUnattested proceeds when build provenance cannot be checked, which
+	// means no GitHub CLI on the box. Verification failure is never waived.
+	AllowUnattested bool `json:"allow_unattested"`
 }
 
 // SelfUpdateResult reports the outcome.
