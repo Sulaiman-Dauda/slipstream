@@ -10,83 +10,115 @@ The trap in any panel comparison is hardware. Two "identical" VPS instances of t
 measured **2.5× apart** on the same fixed workload, and a later pair differed by 16%. Any benchmark
 that runs two panels on two machines is measuring the machines.
 
-So: **both panels were benchmarked on the same physical server, one at a time**, with the OS
-reinstalled in between. CPU parity was verified before and after with a fixed loop (0.51 s vs
-0.50 s) and zero steal on both.
+So: **both panels were benchmarked on the same server, one at a time**, with the OS reinstalled in
+between. The run order was **Slipstream, CloudPanel, Slipstream again**, because a comparison that
+cannot detect its own box drifting is not evidence. CPU parity was checked with a fixed loop before
+and after every stack: 2.20s and 2.13s, then 2.20s and 2.21s, then 2.24s and 2.23s, with zero steal
+throughout. The two Slipstream runs agree within 5% on every scenario, against differences of
+4× to 18× between the panels.
 
 | | |
 | --- | --- |
-| Measured | 25–26 July 2026 |
-| Versions | Slipstream 0.1.0 vs **CloudPanel CE 2.5.4** |
+| Measured | 3 September 2026 |
+| Versions | Slipstream **v0.2.0** vs **CloudPanel CE 2.5.4** (its current release, dated 1 July 2026) |
 | Target | Vultr, 2 vCPU (Haswell), 1.9 GB RAM, Ubuntu 24.04.4 |
-| Workload | WordPress 7.0.2, WooCommerce 10.9.4, TwentyTwentyFive, 102 posts, 50 products |
-| Identical? | yes — same tarballs, SHA-256 verified on both installs |
-| PHP / DB | 8.4 / MariaDB |
+| Workload | WordPress 7.1, WooCommerce 11.1, TwentyTwentyFive, 102 posts, 50 products |
+| Identical? | yes, the same database dump and `wp-content` archive imported into both, SHA-256 verified |
+| PHP / DB | 8.4 / MariaDB 10.11 on both |
 | Generator | `wrk` 4.1.0 |
-| CloudPanel tuning | Varnish enabled with a hand-written WordPress/WooCommerce VCL, Redis object cache, OPcache JIT |
+| CloudPanel tuning | Varnish put in front with a hand-written WordPress/WooCommerce VCL, Redis object cache, OPcache JIT |
 | Slipstream tuning | shipped defaults |
+| Suite | `bench/wrk-suite.sh`, `bench/cpu-parity.sh` |
 
-CloudPanel was tuned to its best deliberately: out of the box its Varnish caches nothing for
-WordPress, because its stock VCL treats a response with no `Cache-Control` header as uncacheable and
-WordPress does not send one. Comparing against an untuned competitor would have been dishonest.
+CloudPanel was tuned to its best deliberately. Out of the box its Varnish caches nothing for
+WordPress: the stock VCL sets `beresp.ttl = 0s` for any response without a `Cache-Control` header
+and WordPress sends none, and CloudPanel does not route a new site through Varnish at all. It was
+put in the path, given rules that cache anonymous pages while bypassing cart, checkout, account and
+any session carrying a WooCommerce cookie, and verified serving `x-cache: HIT` on the shop listing
+with `/cart/` still bypassing. Comparing against an untuned competitor would have been dishonest.
 
-Throughput is measured on loopback so both sides carry the same generator handicap; latency figures
-are also taken over a real 97 ms WAN link.
+Throughput is measured on **loopback**, so both panels carry the same generator handicap. That
+handicap is real and now measured: driving the same target from a separate 4 vCPU machine gives
+Slipstream 11,986 req/s against 9,280 on loopback, and CloudPanel 2,332 against 2,259. Loopback
+figures therefore understate both, fairly. Both sets are below.
 
-These numbers describe **two specific versions on one specific day**, and CloudPanel is actively
-developed — a later release may well close a gap shown here. That is why the version and date are
-in the table above and the suite is in the repository: the comparison is meant to be re-run, not
-cited indefinitely. If you re-run it and get different numbers, open an issue with the output and
-this page gets corrected.
+These numbers describe **two specific versions on one specific day**. CloudPanel is actively
+developed and a later release may close a gap shown here. The suite is in the repository so the
+comparison can be re-run rather than cited indefinitely. If you re-run it and get different
+numbers, open an issue with the output and this page gets corrected.
 
 ## Cached delivery
 
+Loopback, and the timeout count belongs beside the percentile: `wrk` drops a request that exceeds
+its timeout from the latency distribution, so a panel that fails to answer can post a flattering
+p99. Both columns come from the same runs.
+
 | Metric | Slipstream | CloudPanel | |
 | --- | --- | --- | --- |
-| Sustained, 500 connections, 60 s | **9,840 req/s** | 2,495 req/s | 3.9× |
-| p99 at that load | **83 ms** | 6.46 s | 78× tighter |
-| Single-connection latency (p50) | **139 µs** | 487 µs | 3.5× |
-| 200-connection spike | **8,903 req/s** | 2,556 req/s | 3.5× |
-| Static assets, 200 connections | **21,024 req/s** | 5,117 req/s | 4.1× |
+| Sustained, 500 connections, 60 s | **9,280 req/s** | 2,259 req/s | 4.1× |
+| p99 at that load | **85.5 ms**, 1 request timed out | 385.9 ms, **319 timed out** | |
+| Requests completed in that minute | **570,864** | 135,661 | 4.2× |
+| Single-connection latency (p50) | **146 µs** | 493 µs | 3.4× |
+| 200-connection spike | **9,941 req/s** | 2,598 req/s | 3.8× |
+| Static asset, 1 KB, 200 connections | **12,636 req/s** | 2,767 req/s | 4.6× |
+
+Slipstream figures are the mean of the two runs; the spread between them was under 5%.
+
+## Over a network rather than loopback
+
+Driven from a separate 4 vCPU machine in the same region, which is closer to what a visitor
+experiences and removes the generator from the target's cores.
+
+| Metric | Slipstream | CloudPanel | |
+| --- | --- | --- | --- |
+| Sustained, 500 connections | **11,986 req/s** | 2,332 req/s | 5.1× |
+| Static asset, 1 KB | **16,620 req/s** | 2,936 req/s | 5.7× |
+| 2,000-connection flood | **11,483 req/s** | 1,562 req/s | 7.4× |
 
 ## Resilience
 
 | Metric | Slipstream | CloudPanel |
 | --- | --- | --- |
-| 2,000-connection flood | **8,051 req/s, 0 errors** | 163 req/s, 100 timeouts |
-| Peak memory under the full suite | **823 MB, no swap** | 1,754 MB **+ 574 MB swap** |
+| 2,000-connection flood | **8,018 req/s, no errors** | 455 req/s, 1,619 timeouts and 80 read errors |
+| Peak memory under the full suite | **880 MB, no swap** | 1,315 MB, and it swapped |
 
-The memory result is the interesting one. CloudPanel ships `pm.max_children = 250` regardless of the
-machine; under load its FPM climbed to 64 workers at ~104 MB each and pushed the box into swap, which
-is what produced the 13-second p50 on its dynamic test. Reaching its own configured limit would need
-roughly 26 GB of RAM. Slipstream sizes workers from the memory actually available and never swapped.
+CloudPanel ships `pm.max_children = 250` regardless of the machine, and under load its FPM pool
+grows until the box swaps. Slipstream sizes workers from the memory actually available.
 
 ## Footprint
 
 | | Slipstream | CloudPanel |
 | --- | --- | --- |
-| Install time | **79 s** | 410 s |
-| Disk | **+0.67 GB** | +4.44 GB |
-| RAM, idle | **+93 MB** | +432 MB |
-| Services added | **+8** | +23 |
+| Install time | **105 s** | 460 s |
+| Disk | **+0.61 GB** | +4.58 GB |
+| RAM, idle | **+151 MB** | +498 MB |
+| Services added | **+8** | +24 |
 | PHP versions installed | **1** | 10 |
 
 ## Where CloudPanel wins
 
 Stated plainly, because a benchmark page that shows only wins is marketing.
 
-**Uncacheable dynamic rendering.** A WooCommerce product page that cannot be cached renders in
-~189 ms on Slipstream versus ~168 ms on CloudPanel. Shop-listing renders are level (273 ms vs
-283 ms).
+**Uncacheable dynamic rendering**, and by more than the last run showed.
+
+| Metric | Slipstream | CloudPanel | |
+| --- | --- | --- | --- |
+| Uncacheable shop listing, loopback | 5.48 req/s | **10.75 req/s** | 2.0× |
+| The same over the network | 5.44 req/s | **21.99 req/s** | 4.0× |
+
+The gap widens once the generator is off the target's cores, which is the signature of a CPU-bound
+path: on loopback both panels are competing with the load generator for two cores, and that
+compression flatters the slower one.
 
 The cause is measured, not guessed: the `open_basedir` jail costs **72 ms of a 301 ms render (24%)**,
-confirmed by removing it (301 ms → 229 ms) and putting it back (303 ms). CloudPanel sets no
-`open_basedir` at all — it isolates tenants by Unix user alone. We keep the jail. A panel that is 12%
-faster on uncached renders and lets one compromised site read another's files is not a trade worth
-making.
+confirmed by removing it (301 ms to 229 ms) and putting it back (303 ms). CloudPanel sets no
+`open_basedir` at all, isolating tenants by Unix user alone. We keep the jail. A panel that renders
+uncached pages faster and lets one compromised site read another's files is not a trade worth
+making, and this is the row where that choice shows up in a number.
 
-Under a pure uncacheable flood both panels collapse to about 6 req/s on this hardware. Neither makes
-an uncacheable WooCommerce store fast on a 2-core box; there the difference is noise.
+Neither panel makes an uncacheable WooCommerce store fast on a 2-core box. Both are in single or
+low double digits of requests per second, where the practical answer is to cache the page, which is
+the rest of this document.
 
 ## What we tried and rejected
 
@@ -113,11 +145,15 @@ survive:
 ## Reproducing this
 
 ```bash
-# on the target
-IP=<public-ip> PANEL_EMAIL=<email> PANEL_PW=<password> bash scripts/e2e-verify.sh
+# on the target, before and after each stack
+bench/cpu-parity.sh
 
-# then drive load from a second machine
-wrk -t4 -c500 -d60s --latency -H 'Accept-Encoding: gzip' https://your-site/shop/
+# every scenario above, in one run, from the target (loopback) or a bigger
+# machine in the same region (network). See bench/README.md for the full method.
+bench/wrk-suite.sh https://your-site slipstream-v0.2.0
+
+# the panel's own end-to-end suite, 55 checks
+IP=<public-ip> PANEL_EMAIL=<email> PANEL_PW=<password> bash scripts/e2e-verify.sh
 ```
 
 If you re-run this, check CPU parity first and report the hardware. A benchmark without that is a
