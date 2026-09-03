@@ -157,6 +157,10 @@ func (s *Server) handlePanelCertificate(w http.ResponseWriter, r *http.Request) 
 
 // --- Self-update ---
 
+// defaultUpdateURL is the release root the installer uses, so an update with no
+// explicit source goes to the same place the install came from.
+const defaultUpdateURL = "https://github.com/Sulaiman-Dauda/slipstream/releases/latest/download"
+
 func (s *Server) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		BaseURL string `json:"base_url"`
@@ -167,8 +171,11 @@ func (s *Server) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		req.BaseURL, _ = s.Store.GetSetting("update_url", "")
 	}
 	if req.BaseURL == "" {
-		respondErr(w, http.StatusBadRequest, "no update URL configured")
-		return
+		// The project's own releases. Without this the panel's update button
+		// answered "no update URL configured", and the setting it points at is
+		// deliberately not writable through the API: it is where root binaries
+		// come from, so an admin session should not be able to repoint it.
+		req.BaseURL = defaultUpdateURL
 	}
 	s.Store.Audit(s.actor(r), "panel.update", req.Version, "")
 	var out rpc.SelfUpdateResult
