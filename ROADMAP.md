@@ -11,10 +11,10 @@ and inventing them would be dishonest. Order is roughly priority.
 The blockers are about confidence, not features.
 
 - **Production traffic.** Slipstream runs correctly on both supported Ubuntu
-  releases with the end-to-end suite green on each, and has served one real site
-  on a 1 GB server since August 2026. One site for a few months is a start, not a
-  track record, and this stays the single biggest gap between "works" and
-  "trustworthy".
+  releases with the end-to-end suite green on each, and has served two client
+  sites on a single 1 GB server since August 2026. Two sites for a few months is
+  a start, not a track record, and this stays the single biggest gap between
+  "works" and "trustworthy".
 - **An external security review.** There has been one deliberate internal pass
   (see [SECURITY.md](./SECURITY.md)); no independent eyes. A control panel that
   takes root should not claim 1.0 without them.
