@@ -212,10 +212,38 @@ func (s *Server) sessionUser(r *http.Request) (state.User, error) {
 }
 
 // requireSession guards a handler behind a valid session.
+// enrolmentPaths stay reachable when the two-factor requirement is on, so an
+// admin caught by it can actually satisfy it rather than being locked out of
+// the panel that would let them enrol.
+var enrolmentPaths = map[string]bool{
+	"/api/me":                  true,
+	"/api/logout":              true,
+	"/api/account/2fa/begin":   true,
+	"/api/account/2fa/confirm": true,
+}
+
+// twoFactorRequired reports whether this request must be refused because the
+// panel requires TOTP on admin accounts and this one has none. An admin is
+// effectively root on the machine, so an admin password on its own is the whole
+// security boundary; this makes a second factor enforceable rather than
+// optional per account.
+func (s *Server) twoFactorRequired(user state.User, path string) bool {
+	if user.Role != "admin" || user.TOTPEnabled || enrolmentPaths[path] {
+		return false
+	}
+	v, _ := s.Store.GetSetting("require_2fa_admin", "")
+	return v == "1" || v == "true"
+}
+
 func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, err := s.sessionUser(r); err != nil {
+		user, err := s.sessionUser(r)
+		if err != nil {
 			respondErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if s.twoFactorRequired(user, r.URL.Path) {
+			respondErr(w, http.StatusForbidden, "two-factor authentication is required for admin accounts: enrol in Security before continuing")
 			return
 		}
 		next(w, r)
@@ -230,6 +258,10 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		user, err := s.sessionUser(r)
 		if err != nil {
 			respondErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if s.twoFactorRequired(user, r.URL.Path) {
+			respondErr(w, http.StatusForbidden, "two-factor authentication is required for admin accounts: enrol in Security before continuing")
 			return
 		}
 		if user.Role != "admin" {

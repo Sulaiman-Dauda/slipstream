@@ -171,6 +171,7 @@ var editableSettings = map[string]bool{
 	"backup_repository": true,
 	"backup_password":   true,
 	"probe_target":      true,
+	"require_2fa_admin": true,
 }
 
 // Settings the UI may read but not write, because they record what an

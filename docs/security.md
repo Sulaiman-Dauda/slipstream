@@ -120,6 +120,11 @@ configuration file.
 Stated plainly so you can decide for yourself:
 
 - **No external audit yet.** The most important limitation.
+- **Two-factor authentication can be required on admin accounts.** Set `require_2fa_admin` (a
+  checkbox on the settings page). While it is on, an admin with no second factor can reach only
+  their own account and the enrolment routes, so turning it on cannot lock anyone out of the panel
+  they need in order to satisfy it. It is off by default, and worth turning on wherever the panel is
+  reachable from the internet.
 - **A panel administrator is effectively root** by design. The `operator` and `readonly` roles limit
   what *those* accounts can do, not what an admin can.
 - **A local user can reach the panel API on loopback.** Authentication is still required and login is
