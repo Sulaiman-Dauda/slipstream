@@ -521,6 +521,56 @@ func TestMigrationArchiveSkipsEscapingLinksSafely(t *testing.T) {
 	}
 }
 
+// The escaping-link test above uses absolute link targets. Relative ones take a
+// different branch: they are resolved against the entry's own directory rather
+// than the root, which is where an off-by-one puts a write outside the site.
+func TestMigrationArchiveSkipsRelativeEscapingLinks(t *testing.T) {
+	outside := t.TempDir()
+	dest := filepath.Join(outside, "site")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := writeArchive(t,
+		tar.Header{Name: "index.php", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg},
+		// Climbs out of the root from the top level.
+		tar.Header{Name: "up", Linkname: "../", Typeflag: tar.TypeSymlink},
+		// Climbs out from a subdirectory, where the depth arithmetic matters.
+		tar.Header{Name: "wp-content/plugins/deep", Linkname: "../../../../", Typeflag: tar.TypeSymlink},
+		// Writes attempted through both.
+		tar.Header{Name: "up/pwned", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg},
+		tar.Header{Name: "wp-content/plugins/deep/pwned", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg},
+		// Hardlink whose target climbs out relatively.
+		tar.Header{Name: "hl", Linkname: "../../etc/hosts", Typeflag: tar.TypeLink},
+	)
+	if _, _, skipped, err := extractMigrationArchive(archive, dest); err != nil {
+		t.Fatalf("safe entries should extract, got error: %v", err)
+	} else if skipped < 3 {
+		t.Fatalf("expected the escaping links to be skipped, skipped=%d", skipped)
+	}
+	for _, p := range []string{
+		filepath.Join(outside, "pwned"),
+		filepath.Join(filepath.Dir(outside), "pwned"),
+	} {
+		if _, err := os.Lstat(p); err == nil {
+			t.Fatalf("write escaped the extraction root: %s", p)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "index.php")); err != nil {
+		t.Fatalf("benign file was not extracted: %v", err)
+	}
+}
+
+// An absolute member name is a separate check from a ../ one, and is what a tar
+// written on the source host with a full path looks like.
+func TestMigrationArchiveRejectsAbsoluteNames(t *testing.T) {
+	for _, name := range []string{"/etc/shadow", "//etc/shadow", "/root/.ssh/authorized_keys"} {
+		archive := writeArchive(t, tar.Header{Name: name, Mode: 0o644, Size: 1, Typeflag: tar.TypeReg})
+		if _, _, _, err := extractMigrationArchive(archive, t.TempDir()); err == nil {
+			t.Fatalf("absolute name %q was accepted", name)
+		}
+	}
+}
+
 func TestConnectorCopiesMatch(t *testing.T) {
 	b, err := os.ReadFile("../../connector/slipstream-connector/slipstream-connector.php")
 	if err != nil {
