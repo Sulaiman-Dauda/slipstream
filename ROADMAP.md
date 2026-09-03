@@ -11,7 +11,7 @@ and inventing them would be dishonest. Order is roughly priority.
 The blockers are about confidence, not features.
 
 - **Production traffic.** Slipstream runs correctly on both supported Ubuntu
-  releases, its 55-check end-to-end suite last run green on 24.04, and has served two client
+  releases with its 55-check end-to-end suite green on each, and has served two client
   sites on a single 1 GB server since August 2026. Two sites for a few months is
   a start, not a track record, and this stays the single biggest gap between
   "works" and "trustworthy".
