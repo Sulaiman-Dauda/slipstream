@@ -24,6 +24,46 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-04
+
+### Added
+
+- **The panel tells you when an update exists.** A banner on the dashboard names the newer version,
+  links to what changed, and offers an Update now button. Nothing installs by itself: the check
+  reports, the operator decides. Before this there was no way to learn a new release existed, and
+  the only control was a button labelled "Check & update" that checked nothing and updated
+  immediately.
+- **The changelog is published at [slipstreampanel.com/changelog](https://slipstreampanel.com/changelog)**,
+  generated from this file, so every release ships its own notes and the panel can link to them.
+- **Two-factor authentication can be required on admin accounts** (`require_2fa_admin`, off by
+  default). An admin can do anything root can do on the machine, so a second factor should be
+  enforceable rather than per-account opt-in. While it is on, an admin without one can reach only
+  their own account and the enrolment routes, so turning it on cannot lock anyone out.
+- **The panel can be restricted to known addresses.** Its vhost now includes
+  `/etc/slipstream/panel-access.conf` if present, so `allow`/`deny` rules survive the certificate
+  operations that regenerate that file. A firewall rule cannot do this, because the sites share
+  port 443.
+
+### Fixed
+
+- **The settings page could not save.** `GET /api/settings` returns the read-only `panel_domain`
+  alongside the editable keys, the page sent the whole object back, and the handler rejected it, so
+  Save answered `400 panel_domain is set by the operation that owns it` on a form nobody had
+  edited. Every settings change through the UI has failed since that field became readable.
+- **The update button had no source.** It posted an override that was never saved (`update_url` is
+  deliberately not writable: it is where root binaries come from) and got "no update URL
+  configured". It now defaults to the project's own releases, and the field that could never work
+  is gone.
+
+### Security
+
+- **Updates verify build provenance, and fail closed.** The checksums are published in the same
+  release as the binaries, so anyone able to write a release could replace both and reach root on
+  every server that updates. GitHub's signed attestation proves the bytes came from this project's
+  release workflow at a specific commit and cannot be forged by rewriting the release. A check that
+  runs and fails aborts the update always; a host with no `gh` to check with is refused unless the
+  caller explicitly accepts that, which is recorded in the audit log.
+
 ## [0.2.1] — 2026-09-03
 
 ### Fixed
