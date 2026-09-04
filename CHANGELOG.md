@@ -24,7 +24,7 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
-## [0.2.2] — 2026-09-03
+## [0.2.2] — 2026-09-04
 
 ### Added
 
