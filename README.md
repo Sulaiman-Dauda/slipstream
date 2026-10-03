@@ -27,6 +27,8 @@ Benchmarked against CloudPanel on the **same physical server**, one panel at a t
 identical WordPress + WooCommerce workload and both panels tuned to their best (CloudPanel with
 Varnish, a hand-written WordPress VCL, Redis object cache and OPcache JIT):
 
+![Slipstream against CloudPanel on the same server. Slipstream is 3.3 to 7.5 times better on cached throughput, latency, static files, a connection flood, install time, memory and disk. CloudPanel is 4 times faster on uncacheable pages.](docs/media/benchmark.svg)
+
 | | Slipstream | CloudPanel |
 | --- | --- | --- |
 | Cached throughput, sustained 500 connections | **9,280 req/s** | 2,259 req/s |
