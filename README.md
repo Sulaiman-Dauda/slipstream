@@ -111,7 +111,7 @@ certificate warning until the panel has a real certificate, because it starts on
 <details>
 <summary>Building from source instead</summary>
 
-You need Go 1.25+ and Node 20+ on your workstation:
+You need Go 1.26+ and Node 20+ on your workstation:
 
 ```bash
 git clone https://github.com/Sulaiman-Dauda/slipstream.git

@@ -6,7 +6,7 @@ set -euo pipefail
 VERSION="${1:?usage: scripts/build-release.sh <version>}"
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT="${ROOT}/dist/${VERSION}"
-export GOTOOLCHAIN=go1.25.12
+export GOTOOLCHAIN=go1.26.9
 export CGO_ENABLED=0
 
 cd "$ROOT"

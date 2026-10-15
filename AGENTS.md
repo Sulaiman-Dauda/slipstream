@@ -2,7 +2,7 @@
 
 Performance-first hosting control plane: one command to install, one click to launch a
 production-ready site, with caching, tuning, isolation and off-site backups with verified
-restores. Go, `go 1.25`, module `github.com/slipstream-panel/slipstream`. See `README.md` for the
+restores. Go, `go 1.26`, module `github.com/slipstream-panel/slipstream`. See `README.md` for the
 public description and `docs/` for the full documentation.
 
 ## Status: release candidate — safe to run, not yet battle-tested
