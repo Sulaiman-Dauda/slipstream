@@ -27,6 +27,8 @@ Benchmarked against CloudPanel on the **same physical server**, one panel at a t
 identical WordPress + WooCommerce workload and both panels tuned to their best (CloudPanel with
 Varnish, a hand-written WordPress VCL, Redis object cache and OPcache JIT):
 
+![Slipstream against CloudPanel on the same server. Slipstream is 3.3 to 7.5 times better on cached throughput, latency, static files, a connection flood, install time, memory and disk. CloudPanel is 4 times faster on uncacheable pages.](docs/media/benchmark.svg)
+
 | | Slipstream | CloudPanel |
 | --- | --- | --- |
 | Cached throughput, sustained 500 connections | **9,280 req/s** | 2,259 req/s |
@@ -62,7 +64,7 @@ measured worse are in [docs/benchmarks.md](./docs/benchmarks.md). The suite is i
   every release is one command away from rollback.
 - **Backups you have actually tested.** Encrypted, deduplicated, off-site backups via
   [Restic](https://restic.net), with scheduled restores into a scratch directory to prove the
-  snapshot works — not just that it uploaded.
+  snapshot works, not just that it uploaded.
 - **Isolation by default.** Every site gets its own Unix user, PHP-FPM pool, socket and
   `open_basedir` jail, plus a chrooted SFTP account with no shell.
 - **Config drift detection.** Managed files are hashed. Edit an nginx vhost by hand and the panel
@@ -81,7 +83,7 @@ measured worse are in [docs/benchmarks.md](./docs/benchmarks.md). The suite is i
 | Architecture | amd64 |
 | RAM | 1 GB minimum, 2 GB recommended |
 | Disk | 10 GB free |
-| Ports | 80 and 443 must be free — Slipstream owns them |
+| Ports | 80 and 443 must be free, because Slipstream owns them |
 
 It configures nginx, PHP-FPM, MariaDB and systemd on the machine, so give it a server of its own.
 
@@ -99,12 +101,12 @@ curl -fsSL https://get.slipstreampanel.com | sudo bash
 That is the whole install. It checks the machine, installs nginx, PHP-FPM, MariaDB, restic,
 certbot and wp-cli, downloads the Slipstream binaries and verifies each against its published
 SHA-256, creates the users and directories, generates the secrets, starts the services, and
-prints a one-time setup URL. About **eighty seconds**, no questions asked along the way — and it
-shows each step with a tick and its duration as it goes, so you can see it working rather than
+prints a one-time setup URL. About **105 seconds** on the benchmark server, with no questions asked
+along the way, and it shows each step with a tick and its duration as it goes, so you can see it working rather than
 guess. The full output is kept at `/var/log/slipstream-install.log`.
 
 Open the URL, create the administrator account, and add your first site. Expect a browser
-certificate warning until the panel has a real certificate — it starts on a self-signed one.
+certificate warning until the panel has a real certificate, because it starts on a self-signed one.
 
 <details>
 <summary>Building from source instead</summary>
@@ -168,7 +170,7 @@ What is planned, what is deliberately out of scope, and where help is most usefu
 ```
 
 `panel-api` runs as an unprivileged user and can do nothing to the system directly. Every
-privileged action is a **typed command** — `CreateSite`, `DeployRelease`, `RestoreSnapshot` — sent
+privileged action is a **typed command** (`CreateSite`, `DeployRelease`, `RestoreSnapshot`) sent
 to `panel-agent` over an authenticated Unix socket. The agent builds argv arrays, never shell
 strings, which is the boundary that stops a domain name from becoming command injection.
 
@@ -180,7 +182,7 @@ make test      # go vet + go test ./...
 make dist      # linux/amd64 release binaries
 ```
 
-Verify a real server end to end — this provisions every site type, fetches the served page,
+Verify a real server end to end. This provisions every site type, fetches the served page,
 exercises the features and tears everything down:
 
 ```bash
