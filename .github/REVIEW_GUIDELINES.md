@@ -102,6 +102,12 @@ review.
   to be a good one rather than left as "fix stuff".
 - The commit body says what changed and **why**, and records anything measured.
 - Required checks pass, conversations resolved, branch up to date with `main`.
+- **Dependabot UI updates arrive red, by design.** `ui/dist` is committed so
+  `go build` alone produces a working binary, and CI fails when it drifts from
+  a fresh build. Any `ui/` dependency bump changes the bundle, so check out the
+  branch, run `make ui`, commit `ui/dist` and push. Once a human has pushed,
+  Dependabot stops rebasing that PR, so do it after the branch is current. The
+  bundle is byte-identical under Node 20 and 22, so any machine will do. See #41.
 
 ## Turning something down
 
