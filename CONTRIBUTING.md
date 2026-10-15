@@ -11,7 +11,7 @@ instance you can rebuild is the right development environment.
 
 ## Getting set up
 
-You need **Go 1.25+** and **Node 20+**.
+You need **Go 1.26+** and **Node 20+**.
 
 ```bash
 git clone https://github.com/Sulaiman-Dauda/slipstream.git
