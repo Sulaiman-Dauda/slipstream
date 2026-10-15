@@ -161,13 +161,27 @@ step_done
 # ---------- packages ----------
 step "Installing nginx, PHP, MariaDB, restic"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq software-properties-common curl gnupg ca-certificates >/dev/null
-if [[ "$NEED_PHP_PPA" == "1" ]]; then
-  add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
-  apt-get update -qq
+# A server a few minutes old is usually still running unattended-upgrades,
+# which holds the dpkg lock. Without a timeout apt-get gives up at once and the
+# install dies at this step (issue #74), so wait for it instead.
+apt_get() { apt-get -o DPkg::Lock::Timeout=600 "$@"; }
+if fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; then
+  log "Another package manager is running (usually unattended-upgrades on a new server). Waiting for it."
 fi
-apt-get install -y -qq \
+apt_get update -qq
+apt_get install -y -qq software-properties-common curl gnupg ca-certificates >/dev/null
+if [[ "$NEED_PHP_PPA" == "1" ]]; then
+  # The exit code is not trusted either way; the check below tests the outcome.
+  add-apt-repository -y ppa:ondrej/php || true
+  apt_get update -qq
+fi
+if ! apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then
+  if [[ "$NEED_PHP_PPA" == "1" ]]; then
+    fail "PHP ${PHP_VERSION} is not available: adding ppa:ondrej/php failed. Check this server can reach api.launchpad.net and ppa.launchpadcontent.net"
+  fi
+  fail "PHP ${PHP_VERSION} is not available from this server's apt sources"
+fi
+apt_get install -y -qq \
   nginx mariadb-server redis-server restic certbot \
   "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-curl" \
   "php${PHP_VERSION}-gd" "php${PHP_VERSION}-intl" "php${PHP_VERSION}-mbstring" \

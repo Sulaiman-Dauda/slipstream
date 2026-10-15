@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26'
+          go-version-file: go.mod
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -27,8 +27,23 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      # A release must not ship a known vulnerability that a toolchain or
+      # dependency bump would fix. v0.2.3 went out on go1.26.8 with ten reachable
+      # stdlib vulnerabilities because nothing here checked.
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
       - name: Build
         run: make dist
+
+      - name: Check the binaries' Go version
+        run: |
+          want=$(awk '$1 == "toolchain" { print $2 }' go.mod)
+          for f in panel-api panel-agent slipctl; do
+            got=$(go version dist/$f | awk '{ print $2 }')
+            echo "$f: $got"
+            [ "$got" = "$want" ] || { echo "::error::$f built with $got, go.mod says $want"; exit 1; }
+          done
 
       # The installer verifies these before installing, so publish them
       # alongside the binaries. A release without checksums cannot be installed
