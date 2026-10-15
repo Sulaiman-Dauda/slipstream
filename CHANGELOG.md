@@ -3,26 +3,21 @@
 All notable changes to Slipstream are recorded here. This project follows
 [semantic versioning](https://semver.org) once it reaches 1.0.
 
-## Unreleased
-
-### Added
-
-- `panel-api recover-admin`, a root-side way back into the panel. Losing the password meant
-  losing the panel: there was no reset, no way to create an account from the host, and the only
-  password endpoint needed a session you could not get. Root could read the database holding the
-  accounts and could not do anything with it.
-
-  Physical access to the server is the credential, which is the same trust boundary every other
-  recovery mechanism uses. It works whether the panel is running, stopped or never finished
-  setup, because it opens the state database directly.
-
-  The password is generated rather than accepted as an argument, so it never reaches the shell
-  history or `ps`. A reset revokes that account's sessions. With several accounts it lists them
-  rather than guessing which to reset. `--disable-2fa` is separate and opt-in, for a lost device.
-  Every use leaves an audit event.
-
-
 ## [Unreleased]
+
+## [0.2.3] - 2026-10-15
+
+### Security
+
+- **Built with Go 1.26.** Go 1.25 left security support when 1.27 shipped, so v0.2.2 and earlier
+  were compiled with a toolchain that no longer gets fixes. Release builds use 1.26
+  (`scripts/build-release.sh` pins go1.26.9).
+- `golang.org/x/crypto` 0.58.0, `golang.org/x/sys` 0.49.0.
+
+### Changed
+
+- `modernc.org/sqlite` 1.60.1.
+- The panel UI is built against React and React DOM 19.3.0.
 
 ## [0.2.2] — 2026-09-04
 
