@@ -864,9 +864,19 @@ func TestRequire2FAForAdmins(t *testing.T) {
 		t.Fatalf("enabling the requirement = %d %s", resp.StatusCode, body)
 	}
 
-	resp, body := c.do("GET", "/api/sites", nil)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("an admin with no second factor still had full access: %d %s", resp.StatusCode, body)
+	// One route behind each access wrapper. Site management and server-wide
+	// reads once skipped the check, so an admin with no second factor could
+	// still deploy, restore and run SQL.
+	for _, rt := range []struct{ method, path string }{
+		{"GET", "/api/sites"},       // any session
+		{"GET", "/api/users"},       // server-wide viewer
+		{"POST", "/api/cron/1/run"}, // site manager
+		{"PUT", "/api/settings"},    // admin
+	} {
+		resp, body := c.do(rt.method, rt.path, map[string]string{})
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s %s = %d %s: an admin with no second factor still had access", rt.method, rt.path, resp.StatusCode, body)
+		}
 	}
 
 	// The way out has to stay open.

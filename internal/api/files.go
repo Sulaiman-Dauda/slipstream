@@ -31,10 +31,18 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
+	secrecy := s.secrecyFor(r, rel)
+	if secrecy == fileWithheld {
+		respondErr(w, http.StatusForbidden, withheldMessage)
+		return
+	}
 	var res rpc.ReadFileResult
 	if err := s.Agent.Call(rpc.MethodReadFile, rpc.ReadFileParams{Site: site, RelPath: rel}, &res); err != nil {
 		respondErr(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	if secrecy == fileMasked {
+		res.Content = maskFile(rel, res.Content)
 	}
 	respond(w, http.StatusOK, res)
 }
@@ -69,6 +77,11 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
+	// A download cannot be masked usefully, so anything secret is refused.
+	if s.secrecyFor(r, rel) != fileOrdinary {
+		respondErr(w, http.StatusForbidden, withheldMessage)
+		return
+	}
 	var res rpc.TransferFileResult
 	if err := s.Agent.Call(rpc.MethodTransferFile, rpc.TransferFileParams{Site: site, RelPath: rel}, &res); err != nil {
 		respondErr(w, http.StatusBadGateway, err.Error())

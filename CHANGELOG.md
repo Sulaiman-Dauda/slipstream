@@ -5,6 +5,21 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+### Security
+
+- **Requiring 2FA for admins now covers every route.** With `require_2fa_admin` on, an admin with
+  no second factor was refused on admin-only routes but could still use every site management
+  route (deploy, restore, SQL console, file editor) and the server-wide views. They now reach only
+  the 2FA enrolment routes and sign out, as the documentation already said.
+- **Read-only accounts can no longer read secrets through the file manager.** They could open
+  `wp-config.php` (the database password and the connector's site token) and download the
+  database dump every backup leaves in `logs/db-latest.sql`, as well as exports in
+  `shared/exports/`. Every quoted value in `wp-config.php` except a short list of harmless ones
+  (database name and host, site URLs, paths) is now masked for them, as are `.env` values.
+  Dumps, exports, archives (a migration upload or a backup plugin's archive holds both),
+  `.git/`, `.htpasswd`, `.my.cnf` and similar credential files, and private keys are refused.
+  Admins and operators are unaffected.
+
 ## [0.2.4] - 2026-10-15
 
 ### Security

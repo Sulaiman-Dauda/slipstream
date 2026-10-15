@@ -279,6 +279,10 @@ func (s *Server) requireSiteManager(next http.HandlerFunc) http.HandlerFunc {
 			respondErr(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
+		if s.twoFactorRequired(user, r.URL.Path) {
+			respondErr(w, http.StatusForbidden, "two-factor authentication is required for admin accounts: enrol in Security before continuing")
+			return
+		}
 		if user.Role != "admin" && user.Role != "operator" {
 			respondErr(w, http.StatusForbidden, "site management access required")
 			return
@@ -292,6 +296,10 @@ func (s *Server) requireGlobalViewer(next http.HandlerFunc) http.HandlerFunc {
 		user, err := s.sessionUser(r)
 		if err != nil {
 			respondErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if s.twoFactorRequired(user, r.URL.Path) {
+			respondErr(w, http.StatusForbidden, "two-factor authentication is required for admin accounts: enrol in Security before continuing")
 			return
 		}
 		if user.Role == "operator" {

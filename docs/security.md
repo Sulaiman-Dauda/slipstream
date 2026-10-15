@@ -113,7 +113,7 @@ configuration file.
 | --- | --- |
 | `admin` | everything, including server-wide operations. Effectively root on the machine. |
 | `operator` | manage only the sites assigned to them; no server-wide views or settings |
-| `readonly` | view everything, change nothing (but can still manage their own account) |
+| `readonly` | view everything, change nothing (but can still manage their own account). Quoted values in `wp-config.php` (except harmless ones such as the database name and site URLs) and `.env` values are masked; database dumps, exports, archives, `.git/`, credential files and private keys cannot be opened or downloaded |
 
 ## Known limitations
 

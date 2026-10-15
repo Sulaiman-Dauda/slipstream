@@ -127,7 +127,7 @@ recovery-time estimate. A backup that has never been restored is a guess.
 ### Can I use it for clients, with separate logins?
 
 Yes. The `operator` role is scoped to assigned sites — an operator sees only their own sites and gets
-a 404 on anything else. `readonly` can view everything and change nothing. Note that a panel
+a 404 on anything else. `readonly` can view everything and change nothing, except secrets: credentials in `wp-config.php` and `.env` files are masked, and database dumps, archives and key files cannot be opened. Note that a panel
 **admin** is effectively root on the machine; the roles limit those accounts, not the admin.
 
 ### Is there an API?
