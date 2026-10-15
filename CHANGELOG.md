@@ -5,13 +5,37 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-15
+
+### Security
+
+- **The release binaries are now built with go1.26.9.** The v0.2.3 binaries were built with
+  go1.26.8, not go1.26.9 as its entry below says: the release workflow asked for "1.26" and took
+  whichever patch release the build machine had, and the pin lived only in a local script. go1.26.8
+  has ten standard library vulnerabilities that Slipstream's code reaches, fixed in go1.26.9,
+  among them HTTP/2 server crashes and memory and CPU exhaustion (GO-2026-6617, GO-2026-6603,
+  GO-2026-6611). If you run v0.2.3, update.
+- The Go version now comes from the `toolchain` line in `go.mod`, which CI, CodeQL, the release
+  workflow and `scripts/build-release.sh` all read. A release now fails if `govulncheck` finds a
+  reachable vulnerability, or if any binary was built with a different Go version.
+
+### Fixed
+
+- **The installer waits for apt instead of failing.** On a server a few minutes old,
+  unattended-upgrades holds the dpkg lock and the install stopped at step 2. It now waits up to
+  ten minutes and says so (#74).
+- **A failed PHP repository is reported as one.** On Ubuntu 24.04, if `ppa:ondrej/php` could not
+  be added, the install carried on and failed later with "Unable to locate package php8.4-fpm".
+  It now stops with a message pointing at the cause (#74).
+
 ## [0.2.3] - 2026-10-15
 
 ### Security
 
 - **Built with Go 1.26.** Go 1.25 left security support when 1.27 shipped, so v0.2.2 and earlier
   were compiled with a toolchain that no longer gets fixes. Release builds use 1.26
-  (`scripts/build-release.sh` pins go1.26.9).
+  (`scripts/build-release.sh` pins go1.26.9). *Correction: the published binaries were built
+  with go1.26.8. See 0.2.4.*
 - `golang.org/x/crypto` 0.58.0, `golang.org/x/sys` 0.49.0.
 
 ### Changed

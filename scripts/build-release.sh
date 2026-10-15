@@ -6,10 +6,12 @@ set -euo pipefail
 VERSION="${1:?usage: scripts/build-release.sh <version>}"
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT="${ROOT}/dist/${VERSION}"
-export GOTOOLCHAIN=go1.26.9
 export CGO_ENABLED=0
 
 cd "$ROOT"
+# The toolchain line in go.mod is the one pin; CI's setup-go reads it too.
+GOTOOLCHAIN=$(awk '$1 == "toolchain" { print $2 }' go.mod)
+export GOTOOLCHAIN="${GOTOOLCHAIN:?go.mod has no toolchain line}"
 go test ./...
 go vet ./...
 if command -v govulncheck >/dev/null; then
