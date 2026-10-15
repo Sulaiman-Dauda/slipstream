@@ -81,7 +81,7 @@ It ends with something like:
 <summary>Installing an unreleased build instead</summary>
 
 To run a change that has not been released — your own work, or `main` ahead of the last tag —
-build on your workstation and point the installer at the result. You need **Go 1.25+** and
+build on your workstation and point the installer at the result. You need **Go 1.26+** and
 **Node 20+**:
 
 ```bash
