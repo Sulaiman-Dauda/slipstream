@@ -234,6 +234,26 @@ PHPEOF
     *) bad "template part edit purges only ${payload:-nothing} (interior pages keep a stale header)" ;;
   esac
 
+  # ---- Read-only accounts browse files but cannot read secrets: a real
+  # wp-config.php comes back with the database password masked and still
+  # valid PHP, and the backup dump is refused.
+  RJ=$(mktemp); RPW="ro-e2e-$(openssl rand -hex 8)"
+  rid=$(c "$PANEL/api/users" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"readonly-e2e@example.com\",\"password\":\"$RPW\",\"role\":\"readonly\"}" | jqget "['id']")
+  curl -sk -b "$RJ" -c "$RJ" -o /dev/null "$PANEL/api/login" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"readonly-e2e@example.com\",\"password\":\"$RPW\"}"
+  dbpw=$(grep -oP "define\(\s*'DB_PASSWORD',\s*'\K[^']+" "/srv/sites/$FS/shared/wp-config.php")
+  curl -sk -b "$RJ" "$PANEL/api/sites/$FID/files/read?path=shared/wp-config.php" | jqget "['content']" > /tmp/slip-e2e-cfg.php
+  leaked=no; [ -n "$dbpw" ] && grep -qF -- "$dbpw" /tmp/slip-e2e-cfg.php && leaked=yes
+  [ -n "$dbpw" ] || leaked=unknown
+  check "readonly wp-config hides DB password" "$leaked" "no"
+  check "readonly wp-config keeps DB_NAME" "$(grep -c "'DB_NAME'" /tmp/slip-e2e-cfg.php)" "1"
+  check "readonly masked wp-config is valid PHP" "$(php -l /tmp/slip-e2e-cfg.php >/dev/null 2>&1 && echo yes || echo no)" "yes"
+  check "readonly dump download refused" \
+    "$(curl -sk -b "$RJ" -o /dev/null -w '%{http_code}' "$PANEL/api/sites/$FID/files/download?path=logs/db-latest.sql")" "403"
+  rm -f "$RJ" /tmp/slip-e2e-cfg.php
+  [ -n "$rid" ] && c -o /dev/null -X DELETE "$PANEL/api/users/$rid"
+
   # staging clone
   stg=$(c -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/sites/$FID/staging")
   check "staging clone accepted" "$stg" "202"
