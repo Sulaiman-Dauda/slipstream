@@ -9,6 +9,10 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ### Security
 
+- **The release binaries are built with go1.26.10.** go1.26.9 has GO-2026-6809: crypto/x509 did
+  not distrust some compromised intermediate certificates, and Slipstream's code reaches it
+  through `agent.TransferFile`. The release's vulnerability check stopped the first v0.2.5 build
+  before anything was published.
 - **PHP security fixes now install themselves on Ubuntu 24.04.** PHP there comes from
   `ppa:ondrej/php`, and unattended-upgrades only applies Ubuntu's own security fixes by default,
   so a critical PHP fix (php2shell, CVE-2026-109618 and CVE-2026-109619) never arrived without
