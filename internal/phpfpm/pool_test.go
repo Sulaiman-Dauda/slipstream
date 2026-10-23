@@ -62,7 +62,6 @@ func TestRenderPool(t *testing.T) {
 		"listen = /run/slipstream/php/slip-site-7.sock",
 		"pm = dynamic",
 		"php_admin_value[open_basedir] = /srv/sites/shop.example.com:/usr/share/php",
-		"php_admin_flag[opcache.enable] = on",
 		"php_admin_value[opcache.memory_consumption] = 256",
 		"php_admin_value[memory_limit] = 512M", // WooCommerce gets headroom
 		"php_admin_value[disable_functions] = exec,passthru",
@@ -70,6 +69,10 @@ func TestRenderPool(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Errorf("pool missing %q", want)
 		}
+	}
+	// Setting opcache.enable in a pool logs a warning on every worker start.
+	if strings.Contains(content, "opcache.enable]") {
+		t.Errorf("pool must not set opcache.enable (it is on in php.ini)")
 	}
 	// /tmp must not be on open_basedir: it is a cross-tenant channel and all
 	// temp uses are redirected to the site's own tmp.
