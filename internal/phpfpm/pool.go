@@ -250,8 +250,11 @@ php_admin_flag[apc.enabled] = on
 php_admin_flag[apc.enable_cli] = off
 php_admin_value[apc.shm_size] = {{.APCuMB}}M
 
-; Velocity Engine: OPcache sized for this site's memory budget
-php_admin_flag[opcache.enable] = on{{if .PreloadFile}}
+; Velocity Engine: OPcache sized for this site's memory budget. OPcache is
+; switched on in php.ini; opcache.enable is deliberately not set here. A pool
+; value is applied as each worker starts, before OPcache is active in it, so
+; PHP rejects it and logs "Zend OPcache can't be temporary enabled" once per
+; worker.{{if .PreloadFile}}
 php_admin_value[opcache.preload] = {{.PreloadFile}}
 php_admin_value[opcache.preload_user] = {{.Site.SystemUser}}{{end}}
 php_admin_value[opcache.memory_consumption] = {{.OPcache.MemoryMB}}
