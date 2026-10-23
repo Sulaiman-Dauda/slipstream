@@ -5,6 +5,8 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-23
+
 ### Security
 
 - **PHP security fixes now install themselves on Ubuntu 24.04.** PHP there comes from
