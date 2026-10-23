@@ -187,8 +187,35 @@ apt_get install -y -qq \
   "php${PHP_VERSION}-gd" "php${PHP_VERSION}-intl" "php${PHP_VERSION}-mbstring" \
   "php${PHP_VERSION}-soap" "php${PHP_VERSION}-xml" "php${PHP_VERSION}-zip" \
   "php${PHP_VERSION}-imagick" "php${PHP_VERSION}-bcmath" "php${PHP_VERSION}-redis" \
-  "php${PHP_VERSION}-apcu" \
+  "php${PHP_VERSION}-apcu" unattended-upgrades \
   >/dev/null
+
+# Keep PHP patched after install. By default unattended-upgrades applies only Ubuntu's own
+# security pocket, so on 24.04, where PHP comes from ppa:ondrej/php, a critical PHP fix
+# (php2shell, October 2026) never arrived on its own. Allow the PPA as an origin. It also
+# carries a few libraries PHP links against, which then update with it. The php-fpm package
+# restarts its service on upgrade, so the fix is live, not just on disk.
+if [[ "$NEED_PHP_PPA" == "1" ]]; then
+  cat > /etc/apt/apt.conf.d/51slipstream-php-ppa <<'EOF'
+// Managed by Slipstream: install PHP fixes from ppa:ondrej/php automatically.
+Unattended-Upgrade::Origins-Pattern {
+        "origin=LP-PPA-ondrej-php,codename=${distro_codename}";
+};
+EOF
+fi
+# Cloud images turn unattended-upgrades on; minimal images may not. Switch it on when
+# nothing has decided, but leave an explicit "0" alone: that is the admin's call.
+UU_ON=""
+eval "$(apt-config shell UU_ON APT::Periodic::Unattended-Upgrade)"
+if [[ -z "$UU_ON" ]]; then
+  cat > /etc/apt/apt.conf.d/52slipstream-auto-upgrades <<'EOF'
+// Managed by Slipstream: apply security fixes automatically.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+elif [[ "$UU_ON" == "0" ]]; then
+  log "Automatic security updates are switched off on this server. PHP fixes will need installing by hand."
+fi
 
 # Redis stays off until a site enables object caching.
 systemctl disable --now redis-server >/dev/null 2>&1 || true
