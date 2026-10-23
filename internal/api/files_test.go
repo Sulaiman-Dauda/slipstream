@@ -197,7 +197,7 @@ func TestClassifyArchivesAndCredentialFiles(t *testing.T) {
 // endings, inline text outside PHP, numeric passwords, commented-out env
 // lines and YAML-style env lines.
 func TestMaskSecondReviewShapes(t *testing.T) {
-	for name, in := range map[string]string{
+	for name, in := range map[string]string{ //nolint:gosec // G101: fake credentials the masker must hide
 		"comment before var": "<?php\n// Redis: include the password below\n$redis_pass = 'sekret1';\n",
 		"cr endings":         "<?php\r// db\rdefine('DB_PASSWORD','sekret2');\r",
 		"hash bracket":       "<?php\n#[todo] don't forget\ndefine('DB_PASSWORD','sekret3');\n",
