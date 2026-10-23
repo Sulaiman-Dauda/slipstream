@@ -5,6 +5,10 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- PHP-FPM pools no longer set `opcache.enable`. PHP rejected the value as each worker started and logged "Zend OPcache can't be temporary enabled" every time, hundreds of times a day on a busy site. OPcache stays on: `php.ini` enables it. Existing servers keep the old line until a site's pool is rewritten, or you can delete `php_admin_flag[opcache.enable] = on` from `/etc/php/*/fpm/pool.d/slip-site-*.conf` and reload php-fpm.
+
 ## [0.2.5] - 2026-10-23
 
 ### Security
