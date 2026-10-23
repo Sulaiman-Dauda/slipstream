@@ -96,6 +96,26 @@ echo "=================================================================="
 [ "$(login)" ] # ensure cookie
 echo "[login] $( [ -s "$J" ] && echo ok || echo FAILED )"
 
+# ---- host: PHP is patched and stays patched ---------------------------------
+# Not a version floor: Ubuntu backports fixes without changing the upstream number
+# (26.04's patched build still says 8.5.4), so "php -v" cannot tell. Ask apt instead.
+echo "--- host: PHP updates ---"
+apt-get -o DPkg::Lock::Timeout=120 update -qq >/dev/null 2>&1
+check "no pending php$PHPV update" "$(apt list --upgradable 2>/dev/null | grep -c "^php$PHPV-")" "0"
+# An upgrade on disk is not a fix until php-fpm restarts: a master still running a
+# replaced binary shows "(deleted)" on its exe link.
+FPM_PID=$(systemctl show -p MainPID --value "php$PHPV-fpm")
+# MainPID is 0 when it is not running, and /proc/0 has no exe, which would read as a pass.
+check "php$PHPV-fpm running" "$( [ "${FPM_PID:-0}" -gt 0 ] && echo yes || echo no)" "yes"
+check "php$PHPV-fpm runs the installed binary" \
+  "$(readlink "/proc/$FPM_PID/exe" 2>/dev/null | grep -c '(deleted)')" "0"
+UU_ON=""; eval "$(apt-config shell UU_ON APT::Periodic::Unattended-Upgrade)"
+check "unattended-upgrades switched on" "$UU_ON" "1"
+if dpkg-query -W -f '${Version}' "php$PHPV-fpm" 2>/dev/null | grep -q sury; then
+  check "unattended-upgrades covers ppa:ondrej/php" \
+    "$(apt-config dump Unattended-Upgrade::Origins-Pattern | grep -c LP-PPA-ondrej-php)" "1"
+fi
+
 # ---- per-type: create -> active -> serves -> delete(async) -> teardown gone --
 # expect: exact code, or "ok" for any non-5xx/non-fatal (empty app is fine).
 # prep: optional shell snippet run after active (e.g. drop an index.php).
