@@ -7,6 +7,16 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ### Security
 
+- **PHP security fixes now install themselves on Ubuntu 24.04.** PHP there comes from
+  `ppa:ondrej/php`, and unattended-upgrades only applies Ubuntu's own security fixes by default,
+  so a critical PHP fix (php2shell, CVE-2026-109618 and CVE-2026-109619) never arrived without
+  someone running `apt upgrade`. The installer now adds the PPA to unattended-upgrades, and
+  switches unattended-upgrades on where nothing has configured it (an explicit "off" is left
+  alone). On 26.04 PHP comes from Ubuntu and was already covered. `scripts/e2e-verify.sh` now
+  fails when a PHP update is pending, when php-fpm is still running a replaced binary, or when
+  automatic updates do not cover PHP. Servers installed earlier do not get this change. Patch
+  them with `apt update && apt install --only-upgrade 'php8.4*'`, then copy
+  `/etc/apt/apt.conf.d/51slipstream-php-ppa` from `installer/install.sh`.
 - **Requiring 2FA for admins now covers every route.** With `require_2fa_admin` on, an admin with
   no second factor was refused on admin-only routes but could still use every site management
   route (deploy, restore, SQL console, file editor) and the server-wide views. They now reach only
