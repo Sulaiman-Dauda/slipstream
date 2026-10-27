@@ -22,6 +22,9 @@ agent.token
 id_rsa*
 .netrc
 
+# Local agent state
+/.claude/
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db

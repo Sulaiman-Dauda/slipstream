@@ -8,13 +8,13 @@
 # teardown. Finally it runs the WordPress feature suite (cache, object cache,
 # magic login, cron, staging, safe-push) on one site.
 #
-#   PANEL_PW=... IP=<public-ip> bash scripts/e2e-verify.sh
+#   PANEL_EMAIL=... PANEL_PW=... IP=<public-ip> bash scripts/e2e-verify.sh
 #
 # Exit code is non-zero if any check fails.
 set -u
 PANEL="${PANEL:-https://127.0.0.1:5252}"
 IP="${IP:?set IP=<public ip> so sites resolve via sslip.io}"
-EMAIL="${PANEL_EMAIL:-abiodauda@gmail.com}"
+EMAIL="${PANEL_EMAIL:?set PANEL_EMAIL=<admin email>}"
 PW="${PANEL_PW:?set PANEL_PW=<admin password>}"
 DASH="${IP//./-}"
 # Never hardcode a PHP version: 24.04 ships 8.4, 26.04 ships 8.5. Ask the host

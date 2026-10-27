@@ -14,7 +14,7 @@ Read this honestly before making claims in a commit message, an issue or the doc
   `scripts/e2e-verify.sh` **43/43 on both**; benchmarked head-to-head against CloudPanel on
   identical hardware.
 - **Not yet carrying real production traffic.** No third-party has run it, and it has had no
-  external security review. Its sibling [Windlass](../deploy-panel/AGENTS.md) is the one that is
+  external security review. Its sibling [Windlass](https://github.com/Sulaiman-Dauda/windlass) is the one that is
   live.
 - **The defect discovery rate is still high.** 21 real bugs were found in roughly two weeks of
   deliberate pressure-testing, including an authorization bypass, a site-wipe path and a
@@ -79,7 +79,7 @@ IP=<public-ip> PANEL_EMAIL=<email> PANEL_PW=<password> bash scripts/e2e-verify.s
 
 ## Gotchas
 
-- Two panels with overlapping scope live in this folder. Slipstream is hosting-and-performance
+- Slipstream and Windlass overlap in scope. Slipstream is hosting-and-performance
   focused; Windlass is Compose-deployment focused. Don't merge concepts between them casually.
 - `internal/agent/connector.go` embeds the canonical PHP from
   `connector/slipstream-connector/`. Edit the PHP, then regenerate — `TestConnectorCopiesMatch`
