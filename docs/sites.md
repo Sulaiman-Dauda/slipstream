@@ -113,6 +113,54 @@ elsewhere instead, in which case Slipstream does not manage it and backups do no
 root, there is no shell, and the account cannot traverse above its own directory. Set the password
 via `POST /api/sites/{id}/sftp`, or add SSH keys via `POST /api/sites/{id}/ssh-keys`.
 
+## Your own nginx rules
+
+Slipstream rewrites a site's vhost whole every time the site is re-rendered: a settings change, a
+PHP settings change, a certificate issue, and the certificate renewal check every 12 hours. A rule
+edited into the vhost is lost at the next one. Put rules in the site's include directory instead:
+
+```
+/etc/slipstream/nginx/example.com/*.conf
+```
+
+The HTTPS server block includes every `.conf` file in it. Slipstream creates the directory, owned
+by root with mode `0750`, and never writes, changes or deletes anything inside it. To hide an
+export folder in uploads, for example:
+
+```bash
+cat > /etc/slipstream/nginx/example.com/deny-exports.conf <<'EOF'
+location ~* ^/wp-content/uploads/exports/ { return 404; }
+EOF
+nginx -t && systemctl reload nginx
+```
+
+Worth knowing:
+
+- **Test before you reload.** While a broken file is there, `nginx -t` fails, so every site's
+  changes fail too. Each failed render is rolled back to the files that were on disk and the task
+  error carries nginx's message naming the file and line. nginx keeps serving its loaded
+  configuration, and restarting nginx from the panel refuses until the test passes.
+- **Use a regex location.** The include sits after the rule that denies dotfiles and before the
+  static-asset and PHP locations. nginx checks regex locations in the order they appear, so a
+  `location ~` or `location ~*` here wins over Slipstream's for `.pdf`, `.jpg`, `.php` and the
+  rest. A plain prefix location such as `location /exports/` does not, because nginx prefers a
+  matching regex location over a prefix one. Use `location ^~ /exports/` or a regex. A second
+  `location /` duplicates the vhost's own and fails `nginx -t`.
+- **`add_header` replaces, it does not add.** A location of yours that sets any `add_header` drops
+  the security headers Slipstream sets at server level for requests it handles. Repeat them in
+  your location if you need them. `return` and `deny` set no headers and are unaffected.
+- **HTTPS only.** Port 80 only answers certificate challenges and redirects to HTTPS, so a request
+  reaches your rules after the redirect.
+- **Staging gets an empty directory.** Creating a staging site does not copy these rules. Copy them
+  by hand if staging needs them.
+- **Deleting a site leaves them.** They are your files. Remove the directory yourself, or a later
+  site with the same domain picks the rules up.
+- **Existing sites pick up the include at their next re-render.** Sites created before this release
+  get the include line the next time they are rendered. Saving the site's settings does it now.
+- **Keep it root-only.** nginx reads these files as root when it loads its configuration, so
+  anyone who can write here can change how every site on the server is served. Do not loosen the
+  directory's permissions.
+
 ## WordPress and WooCommerce tools
 
 | Action | What it does |

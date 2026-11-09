@@ -90,9 +90,12 @@ slipctl drift
 Every file the panel renders is hashed. If something else changed one, it shows up here. Resolve it:
 
 - `{"action":"restore"}` — discard the manual edit and re-render from desired state;
-- `{"action":"accept"}` — record the current content as expected.
+- `{"action":"accept"}`: record the current content as expected. This stops the report, not the
+  next re-render, which writes the file from desired state again.
 
-Drift covers only files the panel wrote. It is not a general file-integrity monitor.
+Drift covers only files the panel wrote. It is not a general file-integrity monitor, and it does
+not look at your own rules in `/etc/slipstream/nginx/`. See
+[Your own nginx rules](./sites.md#your-own-nginx-rules).
 
 ## Certificates
 

@@ -35,6 +35,12 @@ type Input struct {
 	ACMEWebroot   string
 	ClientMaxBody string // e.g. "128m"
 
+	// CustomIncludeDir is a per-site directory of operator-written nginx
+	// rules, included at server level in the HTTPS vhost. Slipstream never
+	// writes into it, so its contents survive every re-render. Empty renders
+	// no include.
+	CustomIncludeDir string
+
 	// HTTP3 advertises and serves QUIC on 443/udp. Capability-gated: Ubuntu
 	// 24.04 ships nginx 1.24, which has no ngx_http_v3_module, so this stays
 	// false there and the vhost renders HTTP/2 only. It turns on by itself on

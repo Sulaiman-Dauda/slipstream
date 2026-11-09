@@ -5,6 +5,30 @@ All notable changes to Slipstream are recorded here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **Per-site nginx rules that survive re-rendering.** Each site's HTTPS vhost now includes
+  `/etc/slipstream/nginx/<domain>/*.conf`, a root-only directory Slipstream creates and never
+  writes into. Until now there was nowhere to keep a rule: the vhost is rewritten whole on every
+  settings change, certificate issue and 12-hourly renewal check, so a hand edit was lost within
+  half a day. The include sits after the dotfile deny and before the static-asset and PHP
+  locations, so a regex rule there (for example a 404 for an export folder in uploads) wins. Sites
+  created earlier pick up the include at their next re-render. See "Your own nginx rules" in
+  `docs/sites.md`.
+
+### Fixed
+
+- **A rejected nginx configuration no longer reaches PHP-FPM.** A re-render used to reload the
+  site's PHP-FPM pool before running `nginx -t`, so when nginx rejected the change the pool file was
+  rolled back on disk but FPM was left running the abandoned one. The test now runs before any
+  reload, and if a later reload fails FPM is reloaded again from the restored file.
+- **Restarting nginx from the panel tests the configuration first.** A restart with a file nginx
+  rejects stops nginx and leaves every site down, where a refused reload keeps serving. The restart
+  now refuses with nginx's own error instead.
+- **The drift documentation said a hand-edited vhost would not be overwritten.** It is, at the
+  next re-render, and accepting drift does not prevent that. The README, concepts, architecture,
+  operations, FAQ and troubleshooting pages now say so.
+
 ## [0.2.5] - 2026-10-23
 
 ### Security

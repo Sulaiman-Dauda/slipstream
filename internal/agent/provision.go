@@ -71,7 +71,34 @@ func (a *Agent) input(site state.Site) engine.Input {
 		in.CertAvailable = true
 	}
 	in.HTTP3 = a.nginxHasHTTP3()
+	if a.Paths.NginxCustom != "" {
+		in.CustomIncludeDir = a.customIncludeDir(site.Domain)
+	}
 	return in
+}
+
+// customIncludeDir is where an operator keeps nginx rules for one site. The
+// domain has already passed ValidateDomain, so it is safe as a path element.
+func (a *Agent) customIncludeDir(domain string) string {
+	return filepath.Join(a.Paths.NginxCustom, domain)
+}
+
+// ensureCustomIncludeDir creates a site's include directory so an operator
+// can find it, and touches nothing inside it. It is root-only (0750): rules in
+// it run with nginx's privileges at config load, so no site user and not the
+// panel-api user may write or read it.
+func (a *Agent) ensureCustomIncludeDir(domain string) error {
+	if a.Paths.NginxCustom == "" {
+		return nil
+	}
+	if err := os.MkdirAll(a.Paths.NginxCustom, 0o750); err != nil {
+		return err
+	}
+	dir := a.customIncludeDir(domain)
+	if err := os.Mkdir(dir, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
 }
 
 // installedPHPVersions lists the PHP versions actually installed on this host,
@@ -171,20 +198,34 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 	if err := os.MkdirAll(in.LogDir, 0o755); err != nil {
 		return nil, err
 	}
+	if err := a.ensureCustomIncludeDir(site.Domain); err != nil {
+		return nil, fmt.Errorf("create custom nginx include directory: %w", err)
+	}
 
-	// Remember prior content so a failed nginx validation can roll back —
-	// one bad render must never wedge reloads for every other site.
+	// Remember prior content so a failed nginx validation can roll back:
+	// one bad render must never wedge reloads for every other site. The
+	// check runs on the whole configuration, so an operator's broken rule in
+	// any site's include directory also fails it, and this render is undone
+	// rather than left on disk for the next reload to trip over.
 	type prior struct {
 		content []byte
 		existed bool
 	}
 	priors := map[string]prior{}
+	fpmReloaded := false
 	rollback := func() {
 		for path, p := range priors {
 			if p.existed {
 				os.WriteFile(path, p.content, 0o644)
 			} else {
 				os.Remove(path)
+			}
+		}
+		// FPM already loaded the new pool; reload it again so the running
+		// pool matches the restored file rather than the abandoned render.
+		if fpmReloaded {
+			if err := a.reloadPHPFPM(ctx, site.PHPVersion); err != nil {
+				a.Log.Error("php-fpm reload after rollback failed", "site", site.Domain, "err", err)
 			}
 		}
 	}
@@ -245,12 +286,21 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 			return nil, err
 		}
 		managed = append(managed, mf)
+	}
+
+	// Test the nginx configuration before anything is reloaded, so a render
+	// nginx would reject is rolled back without PHP-FPM ever loading its pool.
+	if err := a.testNginx(); err != nil {
+		rollback()
+		return nil, err
+	}
+	if in.PHPSocket != "" {
 		if err := a.reloadPHPFPM(ctx, site.PHPVersion); err != nil {
 			rollback()
 			return nil, err
 		}
+		fpmReloaded = true
 	}
-
 	if err := a.reloadNginx(); err != nil {
 		rollback()
 		return nil, err
@@ -271,12 +321,24 @@ func (a *Agent) renderSite(ctx context.Context, site state.Site) ([]rpc.ManagedF
 	return managed, nil
 }
 
-func (a *Agent) reloadNginx() error {
-	ctx := context.Background()
-	if _, err := a.Runner.Run(ctx, "nginx", "-t"); err != nil {
+// testNginx runs "nginx -t" over the whole configuration. The error carries
+// nginx's own message, which names the file and line it rejected.
+func (a *Agent) testNginx() error {
+	if _, err := a.Runner.Run(context.Background(), "nginx", "-t"); err != nil {
 		return fmt.Errorf("nginx config test failed: %w", err)
 	}
-	_, err := a.Runner.Run(ctx, "systemctl", "reload", "nginx")
+	return nil
+}
+
+// reloadNginx tests the configuration and reloads only if it passes. Every
+// reload and restart the agent performs goes through a test first: nginx keeps
+// serving its loaded configuration when a reload is refused, but a restart
+// with a broken file takes every site down.
+func (a *Agent) reloadNginx() error {
+	if err := a.testNginx(); err != nil {
+		return err
+	}
+	_, err := a.Runner.Run(context.Background(), "systemctl", "reload", "nginx")
 	return err
 }
 

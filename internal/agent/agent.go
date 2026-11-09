@@ -33,6 +33,10 @@ type Paths struct {
 	CertLiveDir  string // /etc/letsencrypt/live
 	NginxSites   string // /etc/nginx/sites-enabled
 	NginxConfDir string // /etc/nginx/conf.d
+	// NginxCustom holds one directory per site of operator-written nginx rules
+	// (/etc/slipstream/nginx/<domain>/*.conf). The agent creates the directory
+	// and never writes, rewrites or deletes anything inside it.
+	NginxCustom  string // /etc/slipstream/nginx
 	PHPPoolRoot  string // /etc/php (…/<ver>/fpm/pool.d)
 	PHPBinDir    string // /usr/sbin (php-fpm<ver>) — where "is it installed?" is decided
 	PHPSocketDir string // /run/slipstream/php
@@ -54,6 +58,7 @@ func DefaultPaths() Paths {
 		CertLiveDir:  "/etc/letsencrypt/live",
 		NginxSites:   "/etc/nginx/sites-enabled",
 		NginxConfDir: "/etc/nginx/conf.d",
+		NginxCustom:  "/etc/slipstream/nginx",
 		PHPPoolRoot:  "/etc/php",
 		PHPBinDir:    "/usr/sbin",
 		PHPSocketDir: "/run/slipstream/php",

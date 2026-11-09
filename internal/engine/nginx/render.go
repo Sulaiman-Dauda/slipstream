@@ -216,7 +216,21 @@ const secHeaders = `{{define "sec"}}
     add_header Alt-Svc 'h3=":443"; ma=86400' always;
 {{- end}}{{end}}`
 
-var vhostTmpl = template.Must(template.New("vhost").Parse(secHeaders +
+// customInclude pulls in the operator's own rules for a site. The vhost is
+// rewritten whole on every render (certificate issue and the 12-hourly renewal
+// check included), so a rule edited into it directly is lost; this directory
+// is the place for them. nginx accepts a wildcard that matches nothing, so a
+// site with no rules, or no directory yet, still passes "nginx -t".
+const customInclude = `{{define "custom"}}
+{{- if .CustomIncludeDir}}
+
+    # Operator rules for this site. Slipstream never writes this directory, so
+    # its files survive every re-render. Loaded before the static-asset and PHP
+    # locations, so a regex location here is matched before theirs.
+    include {{.CustomIncludeDir}}/*.conf;
+{{- end}}{{end}}`
+
+var vhostTmpl = template.Must(template.New("vhost").Parse(secHeaders + customInclude +
 	`# Managed by Slipstream — do not edit. Changes are detected as drift.
 # Site: {{.Site.Domain}} (id {{.Site.ID}}, type {{.Site.Type}}, profile {{.Site.Profile}})
 
@@ -273,6 +287,7 @@ server {
 {{- end}}
 {{- template "sec" .}}
 {{- if .IsProxy}}
+{{- template "custom" .}}
 
     location / {
         proxy_pass {{.Site.Config.ProxyUpstream}};
@@ -293,6 +308,7 @@ server {
     location ~ /\.(?!well-known) {
         deny all;
     }
+{{- template "custom" .}}
 
     location ~* \.(css|js|mjs|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot|otf|mp4|webm|pdf)$ {
         expires 30d;

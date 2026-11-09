@@ -176,9 +176,20 @@ broken repository before you need it.
 
 ## Drift keeps reappearing
 
-Something outside the panel is rewriting a managed file — often a configuration-management tool or a
-hand-edited vhost. Either stop it, or accept the drift so the new content becomes expected. Restoring
-repeatedly will not help if something keeps changing the file back.
+Something outside the panel is rewriting a managed file, often a configuration-management tool or a
+hand-edited vhost. Stop it, or move the change somewhere Slipstream does not render: nginx rules go
+in `/etc/slipstream/nginx/<domain>/`. Accepting the drift only lasts until the site's next
+re-render, and restoring repeatedly will not help if something keeps changing the file back.
+
+## Every site change fails with "nginx config test failed"
+
+Each re-render runs `nginx -t` over the whole configuration before reloading anything, so one
+broken file fails every site's changes, not just its own. The task error carries nginx's message,
+which names the file and line. The usual cause is a rule in an include directory under
+`/etc/slipstream/nginx/`. Fix or remove that file and run `nginx -t` again. The failed renders were
+rolled back, so nothing else needs undoing, and nginx kept serving its loaded configuration
+throughout. Restarting nginx from the panel refuses while the test fails, because a restart with a
+broken configuration would leave it stopped.
 
 ## HTTP/3 is not being used
 

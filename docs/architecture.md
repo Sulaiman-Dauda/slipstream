@@ -44,9 +44,10 @@ ingress.
 2. **panel-agent is stateless.** Desired state arrives with each command. The agent renders
    configuration from it and executes **argv arrays only** — there is no string-built shell anywhere
    in the privileged path.
-3. **SQLite is the single source of truth.** Rendered files are hashed and recorded; the drift
-   checker compares reality against the record and surfaces differences rather than silently
-   overwriting them.
+3. **SQLite is the single source of truth.** Rendered files are hashed and recorded, and the drift
+   checker compares reality against the record and reports differences. A render always writes
+   from desired state, so operator nginx rules live in a per-site include directory
+   (`/etc/slipstream/nginx/<domain>/`) that the agent creates and never writes into.
 
 ## Site layout
 

@@ -32,6 +32,10 @@ func (m *mockRunner) Run(ctx context.Context, name string, args ...string) (stri
 	if err := m.fail[name]; err != nil {
 		return "", err
 	}
+	// A key of "name args" fails one exact command, e.g. "nginx -t".
+	if err := m.fail[strings.Join(append([]string{name}, args...), " ")]; err != nil {
+		return "", err
+	}
 	if name == "cp" {
 		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 		return string(out), err
@@ -98,6 +102,7 @@ func testAgent(t *testing.T) (*Agent, *mockRunner) {
 		CertLiveDir:  mk("letsencrypt"),
 		NginxSites:   mk("nginx", "sites-enabled"),
 		NginxConfDir: mk("nginx", "conf.d"),
+		NginxCustom:  filepath.Join(root, "slipstream", "nginx"),
 		PHPPoolRoot:  mk("php"),
 		PHPSocketDir: mk("phpsock"),
 		WorkDir:      mk("work"),
@@ -962,5 +967,134 @@ func TestPanelVhostIncludesOperatorAccessRules(t *testing.T) {
 	}
 	if !strings.Contains(string(src), "include /etc/slipstream/panel-access.conf*;") {
 		t.Fatal("the panel vhost has no hook for operator access rules, so an IP allowlist would be reverted the next time a panel certificate is issued")
+	}
+}
+
+func phpTestSite(a *Agent) state.Site {
+	site := staticSite(a)
+	site.Type, site.Domain, site.SystemUser = state.SitePHP, "app.example.com", "slip-site-4"
+	site.ID = 4
+	site.RootPath = filepath.Join(a.Paths.SitesRoot, site.Domain)
+	site.PHPVersion = "8.4"
+	return site
+}
+
+// The vhost is rewritten whole on every render, so operator rules live in a
+// per-site directory the agent creates root-only and never writes into. They
+// must come through any number of re-renders, and site deletion leaves them
+// alone because they are the operator's files, not the panel's.
+func TestCustomNginxRulesSurviveRerender(t *testing.T) {
+	a, _ := testAgent(t)
+	site := phpTestSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: site}); err != nil {
+		t.Fatalf("CreateSite: %v", err)
+	}
+	dir := filepath.Join(a.Paths.NginxCustom, site.Domain)
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("include directory not created: %v", err)
+	}
+	if fi.Mode().Perm() != 0o750 {
+		t.Errorf("include directory mode %o, want 750", fi.Mode().Perm())
+	}
+	rule := "location ~* ^/exports/ { return 404; }\n"
+	rulePath := filepath.Join(dir, "deny-exports.conf")
+	if err := os.WriteFile(rulePath, []byte(rule), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	site.Config.PHP.MemoryLimitMB = 512
+	site.Config.CacheTTLSec = 120
+	for i := 0; i < 2; i++ {
+		if _, err := a.ApplySiteConfig(rpc.SiteRef{Site: site}); err != nil {
+			t.Fatalf("re-render %d: %v", i, err)
+		}
+	}
+	vhost, err := os.ReadFile(filepath.Join(a.Paths.NginxSites, site.Domain+".conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(vhost), "include "+dir+"/*.conf;") {
+		t.Errorf("vhost does not include %s:\n%s", dir, vhost)
+	}
+	if b, err := os.ReadFile(rulePath); err != nil || string(b) != rule {
+		t.Errorf("rule file changed by re-render: %q %v", b, err)
+	}
+
+	if _, err := a.DeleteSite(rpc.SiteRef{Site: site}); err != nil {
+		t.Fatalf("DeleteSite: %v", err)
+	}
+	if b, err := os.ReadFile(rulePath); err != nil || string(b) != rule {
+		t.Errorf("site deletion touched the operator's rule file: %q %v", b, err)
+	}
+}
+
+// A render nginx rejects (here, because some include is broken) must be
+// rolled back before anything reloads: the vhost and pool go back to what
+// was on disk, and neither PHP-FPM nor nginx is reloaded with the new files.
+func TestFailedNginxTestRestoresFilesWithoutReloading(t *testing.T) {
+	a, run := testAgent(t)
+	site := phpTestSite(a)
+	if _, err := a.CreateSite(rpc.CreateSiteParams{Site: site}); err != nil {
+		t.Fatalf("CreateSite: %v", err)
+	}
+	vhostPath := filepath.Join(a.Paths.NginxSites, site.Domain+".conf")
+	poolPath := filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", site.SystemUser+".conf")
+	vhostBefore, err := os.ReadFile(vhostPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolBefore, err := os.ReadFile(poolPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Turning the page cache on changes both the vhost and (via the
+	// memory limit) the pool, so both restores are actually exercised.
+	site.Config.PHP.MemoryLimitMB = 768
+	site.Config.CacheEnabled = true
+	run.calls = nil
+	run.fail["nginx -t"] = errors.New("nginx: [emerg] unexpected end of file in deny-exports.conf:1")
+	_, err = a.ApplySiteConfig(rpc.SiteRef{Site: site})
+	if err == nil || !strings.Contains(err.Error(), "deny-exports.conf") {
+		t.Fatalf("want nginx's own error naming the file, got %v", err)
+	}
+	if b, _ := os.ReadFile(vhostPath); string(b) != string(vhostBefore) {
+		t.Error("vhost not restored after failed nginx -t")
+	}
+	if b, _ := os.ReadFile(poolPath); string(b) != string(poolBefore) {
+		t.Error("PHP-FPM pool not restored after failed nginx -t")
+	}
+	if run.called("systemctl", "reload") {
+		t.Errorf("something was reloaded after a failed nginx -t: %v", run.calls)
+	}
+
+	// With the include fixed, the same change applies.
+	delete(run.fail, "nginx -t")
+	if _, err := a.ApplySiteConfig(rpc.SiteRef{Site: site}); err != nil {
+		t.Fatalf("apply after fix: %v", err)
+	}
+	if !run.called("systemctl", "reload", "php8.4-fpm") || !run.called("systemctl", "reload", "nginx") {
+		t.Errorf("expected PHP-FPM and nginx reloads, got %v", run.calls)
+	}
+}
+
+// Restarting nginx with a configuration it rejects stops it and leaves every
+// site down, where a refused reload keeps the old configuration serving.
+func TestRestartNginxRefusesBrokenConfig(t *testing.T) {
+	a, run := testAgent(t)
+	run.fail["nginx -t"] = errors.New("nginx: [emerg] bad rule")
+	if _, err := a.RestartService(rpc.ServiceParams{Name: "nginx"}); err == nil {
+		t.Fatal("restart went ahead with a failing nginx -t")
+	}
+	if run.called("systemctl", "restart") {
+		t.Errorf("systemctl restart ran despite failing nginx -t: %v", run.calls)
+	}
+	delete(run.fail, "nginx -t")
+	if _, err := a.RestartService(rpc.ServiceParams{Name: "nginx"}); err != nil {
+		t.Fatalf("restart with a good config: %v", err)
+	}
+	if !run.called("systemctl", "restart", "nginx") {
+		t.Errorf("expected systemctl restart nginx, got %v", run.calls)
 	}
 }

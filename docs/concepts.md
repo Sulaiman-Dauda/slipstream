@@ -107,12 +107,17 @@ automatically become root, because the API has no root to give away. See
 Every file the panel renders is hashed and the hash recorded. The drift checker compares the
 filesystem against those records.
 
-If you hand-edit a managed nginx vhost, Slipstream **notices and tells you**. It does not silently
-overwrite your change on the next render, and it does not silently keep your change either — it
-surfaces the difference and lets you choose:
+A managed file is rewritten whole every time its site is re-rendered: a settings change, a
+certificate issue, and the certificate renewal check that runs every 12 hours once an ACME email
+is set. A hand edit to a vhost therefore does not last. Drift is how you see that one was made:
 
-- **restore** — discard the manual edit and re-render from desired state;
-- **accept** — record the new hash as expected (useful when you edited deliberately).
+- **restore**: discard the edit and re-render from desired state;
+- **accept**: record the new hash as expected, so drift stops reporting it. The edit is still
+  replaced at the next re-render.
+
+nginx rules you want to keep belong in the site's include directory,
+`/etc/slipstream/nginx/<domain>/`, which Slipstream never writes. See
+[Your own nginx rules](./sites.md#your-own-nginx-rules).
 
 Drift only covers files the panel rendered. It is not a general file-integrity monitor.
 

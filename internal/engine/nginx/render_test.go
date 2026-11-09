@@ -247,3 +247,80 @@ func TestSecurityHeadersPresentInEveryLocationThatSetsHeaders(t *testing.T) {
 		t.Error("php location sets add_header but does not re-declare the security headers")
 	}
 }
+
+// Operator rules live in a per-site directory the vhost includes, because the
+// vhost itself is rewritten on every render. The include has to sit after the
+// dotfile deny (so a rule cannot reopen .env or .git) and before the
+// static-asset and PHP regex locations, or a rule such as
+// "location ~* ^/exports/ { return 404; }" would never match a .pdf or .php.
+func TestCustomIncludeOrder(t *testing.T) {
+	site := wooSite()
+	files, err := Renderer{}.SiteFiles(engine.Input{
+		Site:             site,
+		Policy:           velocity.PolicyFor(site),
+		DocRoot:          "/srv/sites/shop.example.com/current",
+		PHPSocket:        "/run/slipstream/php/slip-site-7.sock",
+		CacheDir:         "/var/cache/slipstream/shop.example.com",
+		LogDir:           "/var/log/slipstream/shop.example.com",
+		CertAvailable:    true,
+		CertFullchain:    "/c.pem",
+		CertKey:          "/k.pem",
+		ACMEWebroot:      "/var/lib/slipstream/acme",
+		CustomIncludeDir: "/etc/slipstream/nginx/shop.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vhost := files["/etc/nginx/sites-enabled/shop.example.com.conf"]
+	inc := "include /etc/slipstream/nginx/shop.example.com/*.conf;"
+	if n := strings.Count(vhost, inc); n != 1 {
+		t.Fatalf("include appears %d times, want 1:\n%s", n, vhost)
+	}
+	at := strings.Index(vhost, inc)
+	https := strings.Index(vhost, "listen 443 ssl")
+	dot := strings.Index(vhost, `location ~ /\.(?!well-known)`)
+	static := strings.Index(vhost, `location ~* \.(css|js`)
+	php := strings.Index(vhost, `location ~ \.php$`)
+	if https < 0 || dot < 0 || static < 0 || php < 0 {
+		t.Fatalf("vhost missing an expected block:\n%s", vhost)
+	}
+	if at < https || at < dot || at > static || at > php {
+		t.Errorf("include at %d; want after HTTPS listen (%d) and dotfile deny (%d), before static (%d) and PHP (%d)",
+			at, https, dot, static, php)
+	}
+}
+
+func TestCustomIncludeProxyAndEmpty(t *testing.T) {
+	site := state.Site{
+		ID: 9, Domain: "app.example.com", Type: state.SiteProxy,
+		Profile: state.ProfileBalanced, SystemUser: "slip-site-9",
+		RootPath: "/srv/sites/app.example.com",
+		Config:   state.SiteConfig{ProxyUpstream: "http://127.0.0.1:3000"},
+	}
+	in := engine.Input{
+		Site: site, Policy: velocity.PolicyFor(site),
+		LogDir:        "/var/log/slipstream/app.example.com",
+		CertAvailable: true, CertFullchain: "/c.pem", CertKey: "/k.pem",
+		ACMEWebroot:      "/var/lib/slipstream/acme",
+		CustomIncludeDir: "/etc/slipstream/nginx/app.example.com",
+	}
+	files, err := Renderer{}.SiteFiles(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vhost := files["/etc/nginx/sites-enabled/app.example.com.conf"]
+	at := strings.Index(vhost, "include /etc/slipstream/nginx/app.example.com/*.conf;")
+	loc := strings.Index(vhost, "proxy_pass ")
+	if at < 0 || at > loc {
+		t.Errorf("proxy vhost include at %d, proxy_pass at %d:\n%s", at, loc, vhost)
+	}
+
+	in.CustomIncludeDir = ""
+	files, err = Renderer{}.SiteFiles(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := files["/etc/nginx/sites-enabled/app.example.com.conf"]; strings.Contains(v, "include ") {
+		t.Errorf("no include directory set, but vhost has an include:\n%s", v)
+	}
+}
