@@ -16,16 +16,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
+      # No build caches in the release job. A tag run restores caches that any
+      # workflow run on main wrote, and these binaries are installed as root,
+      # so the release downloads its Go modules and npm packages fresh.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
+          package-manager-cache: false
 
       # A release must not ship a known vulnerability that a toolchain or
       # dependency bump would fix. v0.2.3 went out on go1.26.8 with ten reachable
@@ -74,7 +79,9 @@ jobs:
             dist/panel-agent
             dist/slipctl
 
-      - name: Publish
+      # zizmor suggests `gh release` here instead. The action is pinned to a
+      # SHA, and rewriting the publish step is a change of its own.
+      - name: Publish # zizmor: ignore[superfluous-actions]
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
