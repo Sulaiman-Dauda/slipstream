@@ -144,8 +144,10 @@ Worth knowing:
   static-asset and PHP locations. nginx checks regex locations in the order they appear, so a
   `location ~` or `location ~*` here wins over Slipstream's for `.pdf`, `.jpg`, `.php` and the
   rest. A plain prefix location such as `location /exports/` does not, because nginx prefers a
-  matching regex location over a prefix one. Use `location ^~ /exports/` or a regex. A second
-  `location /` duplicates the vhost's own and fails `nginx -t`.
+  matching regex location over a prefix one. Use `location ^~ /exports/` or a regex. A `^~`
+  location also skips the dotfile rule for its paths, so only serve files from one if a
+  dotfile there is meant to be public. A second `location /` duplicates the vhost's own and
+  fails `nginx -t`.
 - **`add_header` replaces, it does not add.** A location of yours that sets any `add_header` drops
   the security headers Slipstream sets at server level for requests it handles. Repeat them in
   your location if you need them. `return` and `deny` set no headers and are unaffected.
