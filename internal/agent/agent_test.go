@@ -1044,7 +1044,7 @@ func TestFailedNginxTestRestoresFilesWithoutReloading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	poolBefore, err := os.ReadFile(poolPath)
+	poolBefore, err := os.ReadFile(filepath.Clean(poolPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1059,10 +1059,10 @@ func TestFailedNginxTestRestoresFilesWithoutReloading(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "deny-exports.conf") {
 		t.Fatalf("want nginx's own error naming the file, got %v", err)
 	}
-	if b, _ := os.ReadFile(vhostPath); string(b) != string(vhostBefore) {
+	if b, _ := os.ReadFile(filepath.Clean(vhostPath)); string(b) != string(vhostBefore) {
 		t.Error("vhost not restored after failed nginx -t")
 	}
-	if b, _ := os.ReadFile(poolPath); string(b) != string(poolBefore) {
+	if b, _ := os.ReadFile(filepath.Clean(poolPath)); string(b) != string(poolBefore) {
 		t.Error("PHP-FPM pool not restored after failed nginx -t")
 	}
 	if run.called("systemctl", "reload") {
