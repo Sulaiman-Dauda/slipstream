@@ -999,7 +999,7 @@ func TestCustomNginxRulesSurviveRerender(t *testing.T) {
 	}
 	rule := "location ~* ^/exports/ { return 404; }\n"
 	rulePath := filepath.Join(dir, "deny-exports.conf")
-	if err := os.WriteFile(rulePath, []byte(rule), 0o640); err != nil {
+	if err := os.WriteFile(rulePath, []byte(rule), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1017,14 +1017,14 @@ func TestCustomNginxRulesSurviveRerender(t *testing.T) {
 	if !strings.Contains(string(vhost), "include "+dir+"/*.conf;") {
 		t.Errorf("vhost does not include %s:\n%s", dir, vhost)
 	}
-	if b, err := os.ReadFile(rulePath); err != nil || string(b) != rule {
+	if b, err := os.ReadFile(filepath.Clean(rulePath)); err != nil || string(b) != rule {
 		t.Errorf("rule file changed by re-render: %q %v", b, err)
 	}
 
 	if _, err := a.DeleteSite(rpc.SiteRef{Site: site}); err != nil {
 		t.Fatalf("DeleteSite: %v", err)
 	}
-	if b, err := os.ReadFile(rulePath); err != nil || string(b) != rule {
+	if b, err := os.ReadFile(filepath.Clean(rulePath)); err != nil || string(b) != rule {
 		t.Errorf("site deletion touched the operator's rule file: %q %v", b, err)
 	}
 }
@@ -1040,7 +1040,7 @@ func TestFailedNginxTestRestoresFilesWithoutReloading(t *testing.T) {
 	}
 	vhostPath := filepath.Join(a.Paths.NginxSites, site.Domain+".conf")
 	poolPath := filepath.Join(a.Paths.PHPPoolRoot, site.PHPVersion, "fpm/pool.d", site.SystemUser+".conf")
-	vhostBefore, err := os.ReadFile(vhostPath)
+	vhostBefore, err := os.ReadFile(filepath.Clean(vhostPath))
 	if err != nil {
 		t.Fatal(err)
 	}
