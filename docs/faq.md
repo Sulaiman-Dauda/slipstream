@@ -48,14 +48,15 @@ supported — one target done well beats five done approximately.
 
 ### Do I need to know nginx?
 
-No for normal use. Yes if you want to hand-edit a vhost, and if you do, the panel will detect the
-change as drift and ask what you want to do about it rather than silently reverting you.
+No for normal use. Yes if you want your own rules, which go in `/etc/slipstream/nginx/<domain>/`
+rather than in the vhost. See [Your own nginx rules](./sites.md#your-own-nginx-rules).
 
 ### What happens if I edit a config file by hand?
 
-Nothing immediately — Slipstream does not watch and revert. Next time drift is checked it appears,
-and you choose to restore the rendered version or accept yours. See
-[Operations](./operations.md#drift).
+It lasts until the site is next re-rendered: a settings change, a certificate issue, or the
+certificate renewal check every 12 hours. Until then drift detection shows the edit, and you can
+restore the rendered version or accept yours, but accepting only stops the report. The next render
+still replaces the file. See [Operations](./operations.md#drift).
 
 ### How do I move a site here from another host?
 

@@ -67,8 +67,9 @@ measured worse are in [docs/benchmarks.md](./docs/benchmarks.md). The suite is i
   snapshot works, not just that it uploaded.
 - **Isolation by default.** Every site gets its own Unix user, PHP-FPM pool, socket and
   `open_basedir` jail, plus a chrooted SFTP account with no shell.
-- **Config drift detection.** Managed files are hashed. Edit an nginx vhost by hand and the panel
-  tells you, rather than silently overwriting your change on the next render.
+- **Config drift detection.** Managed files are hashed, so a hand edit to an nginx vhost shows up
+  in the panel. Rules you want to keep go in a per-site include directory that Slipstream never
+  writes, so they survive every re-render.
 - **HTTP/3.** Enabled automatically where the OS ships an nginx built with it (Ubuntu 26.04), off
   where it doesn't (24.04). No custom nginx build to maintain.
 - **Let's Encrypt**, per-site cron, a jailed file manager, a database console, one-click login to

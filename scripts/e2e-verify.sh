@@ -329,6 +329,120 @@ if [ "$st" = active ]; then
   check "migration-site teardown completes" "$(teardown_gone "$MID")" "yes"
 fi
 
+# ---- Custom nginx rules survive re-rendering -------------------------------
+# A site's vhost is rewritten whole on every settings change, certificate issue
+# and 12-hourly renewal check, so a hand edit to it is lost within half a day.
+# Operator rules live in /etc/slipstream/nginx/<domain>/ instead, which the
+# agent creates and never writes. This proves a deny rule there holds through
+# each kind of re-render, and that a broken rule makes a change fail and roll
+# back rather than take the site down.
+#
+# The certificate step needs a real address for the ACME account:
+#   E2E_ACME_EMAIL=you@example.org
+# Without it that step is reported as skipped and counts as neither pass nor
+# fail. The panel's own acme_email is put back afterwards, since while it is
+# set every new site requests a certificate.
+echo "--- custom nginx rules survive re-rendering ---"
+CS="rules.$DASH.sslip.io"
+CDIR="/etc/slipstream/nginx/$CS"
+CV="/etc/nginx/sites-enabled/$CS.conf"
+code_of() { curl -sk --resolve "$1:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$1$2"; }
+vhost_inode() { stat -c %i "$CV" 2>/dev/null; }
+rules_hold() {
+  local label=$1 p
+  for p in /exports/report.pdf /exports/list.csv /exports/run.php; do
+    check "$label: $p denied" "$(code_of "$CS" "$p")" "404"
+  done
+  check "$label: control file serves" "$(code_of "$CS" /control.txt)" "200"
+  check "$label: rule file untouched" "$(sha256sum "$CDIR/deny-exports.conf" | cut -d' ' -f1)" "$RULE_SUM"
+  check "$label: vhost includes the rules" "$(grep -cF "include $CDIR/*.conf;" "$CV")" "1"
+}
+# rerender_task <label> <inode before> <task id>: the task must succeed and
+# must really have rewritten the vhost (a new inode), or the rules were never
+# put to the test. Read the inode before sending the request: the task runs
+# as soon as it is accepted and a render takes milliseconds.
+rerender_task() {
+  local label=$1 before=$2 tid=$3
+  check "$label task succeeds" "$(wait_task "${tid:-0}" 240)" "succeeded"
+  check "$label rewrote the vhost" "$( [ "$(vhost_inode)" != "$before" ] && echo yes || echo no)" "yes"
+  rules_hold "after $label"
+}
+CID=$(create_site "{\"domain\":\"$CS\",\"type\":\"php\",\"php_version\":\"$PHPV\"}")
+st=$(wait_active "${CID:-0}" 120); check "rules-site provisions" "$st" "active"
+if [ "$st" = active ]; then
+  CU=$(site_get "$CID" | jqget "['system_user']")
+  CR="/srv/sites/$CS/current"
+  mkdir -p "$CR/exports"
+  echo report > "$CR/exports/report.pdf"
+  echo a,b > "$CR/exports/list.csv"
+  printf '%s' '<?php echo "exports-php";' > "$CR/exports/run.php"
+  echo control > "$CR/control.txt"
+  chown -R "$CU:$CU" "$CR/exports" "$CR/control.txt"
+
+  check "include directory is root-only" "$(stat -c '%a %U' "$CDIR" 2>/dev/null)" "750 root"
+  check "vhost includes the directory" "$(grep -cF "include $CDIR/*.conf;" "$CV")" "1"
+  # Before any rule the files serve, so the 404s below are the rule's doing.
+  for p in /exports/report.pdf /exports/list.csv /exports/run.php; do
+    check "before rule: $p serves" "$(code_of "$CS" "$p")" "200"
+  done
+
+  cat > "$CDIR/deny-exports.conf" <<'EOF'
+location ~* ^/exports/ { return 404; }
+EOF
+  RULE_SUM=$(sha256sum "$CDIR/deny-exports.conf" | cut -d' ' -f1)
+  if nginx -t -q && systemctl reload nginx; then ok "rule loads (nginx -t, reload)"; else bad "rule loads (nginx -t, reload)"; fi
+  sleep 1
+  rules_hold "after reload"
+
+  ino=$(vhost_inode)
+  t=$(c -X PUT "$PANEL/api/sites/$CID/config" -H 'Content-Type: application/json' \
+    -d '{"cache_enabled":true,"cache_ttl_sec":120}' | jqget "['task']['id']")
+  rerender_task "site config change" "$ino" "$t"
+
+  ino=$(vhost_inode)
+  t=$(c -X PUT "$PANEL/api/sites/$CID/php" -H 'Content-Type: application/json' \
+    -d '{"memory_limit_mb":384}' | jqget "['task']['id']")
+  rerender_task "PHP settings change" "$ino" "$t"
+
+  if [ -n "${E2E_ACME_EMAIL:-}" ]; then
+    ORIG_ACME=$(c "$PANEL/api/settings" | jqget "['acme_email']")
+    c -o /dev/null -X PUT "$PANEL/api/settings" -H 'Content-Type: application/json' \
+      -d "{\"acme_email\":\"$E2E_ACME_EMAIL\"}"
+    ino=$(vhost_inode)
+    t=$(c -X POST "$PANEL/api/sites/$CID/certificate" | jqget "['task']['id']")
+    rerender_task "certificate issue" "$ino" "$t"
+    c -o /dev/null -X PUT "$PANEL/api/settings" -H 'Content-Type: application/json' \
+      -d "{\"acme_email\":\"$ORIG_ACME\"}"
+    check "acme_email put back" "$(c "$PANEL/api/settings" | jqget "['acme_email']")" "$ORIG_ACME"
+  else
+    echo "  SKIP certificate issue re-render (set E2E_ACME_EMAIL to run it)"
+  fi
+
+  # A broken rule must fail the change and roll it back, with nginx's own
+  # message, while the site carries on serving its loaded configuration.
+  printf 'location ~* ^/broken/ { return 404;\n' > "$CDIR/broken.conf"
+  VSUM=$(sha256sum "$CV" | cut -d' ' -f1)
+  t=$(c -X PUT "$PANEL/api/sites/$CID/config" -H 'Content-Type: application/json' \
+    -d '{"cache_ttl_sec":240}' | jqget "['task']['id']")
+  check "change with a broken rule fails" "$(wait_task "${t:-0}" 120)" "failed"
+  terr=$(c "$PANEL/api/tasks/${t:-0}" | jqget "['error']")
+  check "failure names the broken file" "$(grep -c 'broken.conf' <<<"$terr")" "1"
+  check "vhost rolled back" "$(sha256sum "$CV" | cut -d' ' -f1)" "$VSUM"
+  check "panel refuses to restart nginx" \
+    "$(c -o /dev/null -w '%{http_code}' -X POST "$PANEL/api/services/nginx/restart")" "502"
+  check "nginx still running" "$(systemctl is-active nginx)" "active"
+  rules_hold "with a broken rule present"
+  rm -f "$CDIR/broken.conf"
+  if nginx -t -q; then ok "config passes once the broken rule is gone"; else bad "config passes once the broken rule is gone"; fi
+
+  check "rules-site delete accepted" "$(delete_site "$CID")" "202"
+  check "rules-site teardown completes" "$(teardown_gone "$CID")" "yes"
+  # The rules are the operator's files, so deleting the site leaves them.
+  check "rules left in place on site delete" \
+    "$( [ "$(sha256sum "$CDIR/deny-exports.conf" 2>/dev/null | cut -d' ' -f1)" = "$RULE_SUM" ] && echo yes || echo no)" "yes"
+  rm -rf "$CDIR"
+fi
+
 # cleanup woo (also verifies commerce-site teardown)
 if [ -n "${WID:-}" ]; then
   check "woocommerce delete accepted" "$(delete_site "$WID")" "202"

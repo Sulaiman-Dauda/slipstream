@@ -47,6 +47,13 @@ func (a *Agent) RestartService(p rpc.ServiceParams) (map[string]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown service %q", p.Name)
 	}
+	// A restart with a configuration nginx rejects stops nginx and leaves it
+	// down, taking every site with it. Test first and refuse instead.
+	if unit == "nginx" {
+		if err := a.testNginx(); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := a.Runner.Run(context.Background(), "systemctl", "restart", unit); err != nil {
 		return nil, err
 	}
