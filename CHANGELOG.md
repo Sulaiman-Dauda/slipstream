@@ -28,6 +28,7 @@ All notable changes to Slipstream are recorded here. This project follows
 - **The drift documentation said a hand-edited vhost would not be overwritten.** It is, at the
   next re-render, and accepting drift does not prevent that. The README, concepts, architecture,
   operations, FAQ and troubleshooting pages now say so.
+- PHP-FPM pools no longer set `opcache.enable`. PHP rejected the value as each worker started and logged "Zend OPcache can't be temporary enabled" every time, hundreds of times a day on a busy site. OPcache stays on: `opcache.enable` defaults to on and nothing turns it off. Existing servers keep the old line until a site's pool is rewritten, or you can delete `php_admin_flag[opcache.enable] = on` from `/etc/php/*/fpm/pool.d/slip-site-*.conf` and reload php-fpm.
 
 ## [0.2.5] - 2026-10-23
 
